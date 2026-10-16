@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "my-local-app",
+  "artifactsDir": ".testswarm",
+  "target": {
+    "baseUrl": "http://127.0.0.1:3000",
+    "allowedOrigins": ["http://127.0.0.1:3000"],
+    "startPath": "/",
+    "browser": "chromium",
+    "actionTimeoutMs": 10000,
+    "navigationTimeoutMs": 30000,
+    "viewport": { "width": 1280, "height": 720 },
+    "viewportProfiles": [
+      { "name": "mobile", "width": 390, "height": 844 },
+      { "name": "tablet", "width": 768, "height": 1024 },
+      { "name": "desktop", "width": 1280, "height": 720 }
+    ]
+  },
+  "budgets": { "maxRoutes": 25, "maxCases": 100, "maxRetries": 1, "maxConcurrency": 1 },
+  "policy": { "allowDestructiveActions": false, "allowExternalNetwork": false, "redactSecrets": true }
+}

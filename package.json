@@ -1,0 +1,27 @@
+{
+  "name": "testswarm-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first multi-agent web application testing engine",
+  "type": "module",
+  "bin": { "testswarm": "dist/src/cli/index.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/src/cli/index.js",
+    "mcp": "node dist/src/mcp-server/index.js",
+    "demo": "node fixtures/demo-app/server.mjs"
+  },
+  "engines": { "node": ">=22.5" },
+  "dependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "playwright": "^1.52.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}

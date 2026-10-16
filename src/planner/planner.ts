@@ -1,0 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { TestPlan, TestCase, DiscoveryResult } from "../core/contracts.js";
+export function createStarterPlan(feature = "homepage"): TestPlan {
+  const cases: TestCase[] = [{ id: "TS-HOME-001", title: "Homepage loads with a meaningful heading", feature, category: "functional", priority: "high", preconditions: [], steps: ["Navigate to the configured start path"], assertions: ["The page has a visible heading"], expectedOutcome: "A user can identify the page purpose", requiredEvidence: ["screenshot", "console"], timeoutMs: 30000, destructive: "none" }];
+  return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases };
+}
+export function createPlanFromDiscovery(discovery: DiscoveryResult): TestPlan {
+  const cases: TestCase[] = discovery.routes.flatMap((route, index) => [
+    { id: `TS-DISC-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} loads correctly`, feature: route.heading || route.title || route.path, category: "functional", priority: index === 0 ? "high" : "medium", preconditions: [], steps: [`Navigate to ${route.path}`], assertions: ["The document loads without a navigation error", "A meaningful heading is visible"], expectedOutcome: "The route is usable and identifiable", requiredEvidence: ["screenshot", "console", "network"], timeoutMs: 30000, destructive: "none" },
+    { id: `TS-A11Y-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} exposes keyboard-reachable controls`, feature: route.heading || route.title || route.path, category: "accessibility", priority: "medium", preconditions: [], steps: [`Navigate to ${route.path}`, "Move focus through interactive controls"], assertions: ["Interactive controls have accessible names"], expectedOutcome: "Keyboard users can identify controls", requiredEvidence: ["screenshot", "console"], timeoutMs: 30000, destructive: "none" }
+    , { id: `TS-RESP-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} has no horizontal overflow`, feature: route.heading || route.title || route.path, category: "responsive", priority: "medium", preconditions: [], steps: [`Navigate to ${route.path}`, "Inspect the layout at configured viewport profiles"], assertions: ["The document does not overflow horizontally"], expectedOutcome: "Content remains usable across configured viewport profiles", requiredEvidence: ["screenshot", "json"], timeoutMs: 30000, destructive: "none" }
+  ]);
+  return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases };
+}
