@@ -7,7 +7,13 @@ import { executeCaseWithRetry } from "../browser-runtime/runner.js";
 import { discoverApplication } from "../discovery/discover.js";
 import { buildReport, writeReport } from "../reporting/report.js";
 import { classifyFailures } from "../verification/verifier.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, copyFile } from "node:fs/promises";
+import { measureRun, writeBenchmark } from "../benchmarks/benchmark.js";
+import { SeededDefect } from "./contracts.js";
+import { compareRuns } from "../benchmarks/compare.js";
+import { runSpecialists } from "../agents/orchestrator.js";
+import { runDoctor } from "./doctor.js";
+import { HttpTestDataProvider } from "./http-test-data.js";
 export class Engine {
   private readonly cancellations = new Set<string>();
   constructor(private readonly store: Store = new SqliteStore()) {}
@@ -15,16 +21,18 @@ export class Engine {
   async run(planId: string) {
     const config = await loadConfig(), plan = await this.store.getPlan(planId); if (!plan) throw new Error(`Plan not found: ${planId}`);
     const run: TestRun = { id: randomUUID(), projectName: config.name, planId, status: "running", startedAt: new Date().toISOString(), executions: [] }; await this.store.putRun(run);
+    let fixture; const provider = config.testData ? new HttpTestDataProvider(config.testData.setupUrl, config.testData.cleanupUrl, config.testData.fixturePath, config.testData.timeoutMs) : undefined;
+    if (provider) { try { fixture = await provider.setup(); } catch (error) { run.status = "failed"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run; } }
     const profiles = config.target.viewportProfiles.length ? config.target.viewportProfiles : [{ name: "default", width: config.target.viewport.width, height: config.target.viewport.height }];
     for (const testCase of plan.cases) {
       if (this.cancellations.has(run.id)) { run.status = "cancelled"; break; }
       for (const profile of profiles) {
         if (this.cancellations.has(run.id)) { run.status = "cancelled"; break; }
-        const execution = await executeCaseWithRetry({ ...config.target, viewport: { width: profile.width, height: profile.height } }, testCase, `${config.artifactsDir}/runs/${run.id}/${profile.name}`, config.budgets.maxRetries); execution.viewportProfile = profile.name; run.executions.push(execution); await this.store.putRun(run);
+        const execution = await executeCaseWithRetry({ ...config.target, viewport: { width: profile.width, height: profile.height }, viewportProfileName: profile.name }, testCase, `${config.artifactsDir}/runs/${run.id}/${profile.name}`, config.budgets.maxRetries); execution.viewportProfile = profile.name; run.executions.push(execution); await this.store.putRun(run);
       }
     }
-    if (run.status === "cancelled" || this.cancellations.has(run.id)) { run.status = "cancelled"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run; }
-    run.status = run.executions.every(x => x.outcome === "passed") ? "completed" : "failed"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run;
+    if (run.status === "cancelled" || this.cancellations.has(run.id)) { run.status = "cancelled"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); if (fixture && provider) await provider.cleanup(fixture).catch(() => undefined); return run; }
+    run.status = run.executions.every(x => x.outcome === "passed") ? "completed" : "failed"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); if (fixture && provider) await provider.cleanup(fixture).catch(() => undefined); return run;
   }
   async status(id: string) { const run = await this.store.getRun(id); if (!run) throw new Error(`Run not found: ${id}`); return run; }
   async cancel(id: string) { const run = await this.status(id); if (["completed", "failed", "cancelled"].includes(run.status)) return run; this.cancellations.add(id); run.status = "cancelled"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run; }
@@ -37,5 +45,30 @@ export class Engine {
   async evidence(runId: string) { const run = await this.status(runId); return run.executions.flatMap(execution => execution.evidence.map(item => ({ ...item, executionId: execution.id, testCaseId: execution.testCaseId }))); }
   async verify(runId: string) { const run = await this.status(runId), plan = await this.store.getPlan(run.planId); if (!plan) throw new Error(`Plan not found: ${run.planId}`); return classifyFailures(run, plan); }
   async retest(runId: string) { const run = await this.status(runId); return this.run(run.planId); }
+  async resume(runId: string) {
+    const config = await loadConfig(), run = await this.status(runId), plan = await this.store.getPlan(run.planId); if (!plan) throw new Error(`Plan not found: ${run.planId}`);
+    if (!["running", "failed"].includes(run.status)) throw new Error(`Run ${runId} cannot be resumed from ${run.status}`);
+    run.status = "running"; run.finishedAt = undefined; await this.store.putRun(run);
+    const profiles = config.target.viewportProfiles.length ? config.target.viewportProfiles : [{ name: "default", width: config.target.viewport.width, height: config.target.viewport.height }];
+    for (const testCase of plan.cases) for (const profile of profiles) {
+      if (run.executions.some(item => item.testCaseId === testCase.id && item.viewportProfile === profile.name && item.outcome === "passed")) continue;
+      if (this.cancellations.has(run.id)) { run.status = "cancelled"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run; }
+      const execution = await executeCaseWithRetry({ ...config.target, viewport: { width: profile.width, height: profile.height }, viewportProfileName: profile.name }, testCase, `${config.artifactsDir}/runs/${run.id}/${profile.name}/resume`, config.budgets.maxRetries); execution.viewportProfile = profile.name; run.executions.push(execution); await this.store.putRun(run);
+    }
+    run.status = run.executions.every(item => item.outcome === "passed" || item.outcome === "flaky") ? "completed" : "failed"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return run;
+  }
+  async repeat(planId: string, count = 2) {
+    if (!Number.isInteger(count) || count < 2 || count > 10) throw new Error("Repeat count must be an integer from 2 to 10");
+    const runs: TestRun[] = [];
+    for (let index = 0; index < count; index++) runs.push(await this.run(planId));
+    const executions = runs.flatMap(run => run.executions);
+    return { planId, requestedRuns: count, runIds: runs.map(run => run.id), outcomes: { passed: executions.filter(item => item.outcome === "passed").length, failed: executions.filter(item => item.outcome === "failed").length, flaky: executions.filter(item => item.outcome === "flaky").length, blocked: executions.filter(item => item.outcome === "blocked").length }, stable: executions.every(item => item.outcome === "passed"), runs };
+  }
   async exportPlan(planId: string) { const plan = await this.store.getPlan(planId); if (!plan) throw new Error(`Plan not found: ${planId}`); const config = await loadConfig(), directory = `${config.artifactsDir}/exports`; await mkdir(directory, { recursive: true }); const file = `${directory}/${plan.id}.spec.ts`; const source = `import { test, expect } from "@playwright/test";\n\n${plan.cases.map(testCase => `test(${JSON.stringify(testCase.title)}, async ({ page }) => {\n  await page.goto(${JSON.stringify(testCase.steps[0]?.replace(/^Navigate to /, "") ?? "/")});\n  await expect(page.getByRole("heading").first()).toBeVisible();\n});`).join("\n\n")}`; await writeFile(file, source); return { file, testCount: plan.cases.length }; }
+  async benchmark(runId: string) { const config = await loadConfig(), run = await this.status(runId), plan = await this.store.getPlan(run.planId); if (!plan) throw new Error(`Plan not found: ${run.planId}`); let oracle: SeededDefect[] = []; if (config.benchmarkOraclePath) { const raw = JSON.parse(await (await import("node:fs/promises")).readFile(config.benchmarkOraclePath, "utf8")); oracle = raw.map((item: unknown) => SeededDefect.parse(item)); } const result = measureRun(run, plan, oracle); return { result, file: await writeBenchmark(result, `${config.artifactsDir}/benchmarks`) }; }
+  async compare(firstRunId: string, secondRunId: string) { const first = await this.status(firstRunId), second = await this.status(secondRunId); return compareRuns(first, second); }
+  async agents(planId: string) { const config = await loadConfig(), plan = await this.store.getPlan(planId); if (!plan) throw new Error(`Plan not found: ${planId}`); return runSpecialists(config.target, plan.cases, `${config.artifactsDir}/agent-runs/${plan.id}`, config.budgets.maxRetries); }
+  async agentRun(planId: string) { const config = await loadConfig(), plan = await this.store.getPlan(planId); if (!plan) throw new Error(`Plan not found: ${planId}`); const run: TestRun = { id: randomUUID(), projectName: `${config.name}:specialists`, planId, status: "running", startedAt: new Date().toISOString(), executions: [] }; await this.store.putRun(run); const result = await runSpecialists(config.target, plan.cases, `${config.artifactsDir}/agent-runs/${run.id}`, config.budgets.maxRetries); run.executions = result.executions; run.status = run.executions.every(item => item.outcome === "passed" || item.outcome === "flaky") ? "completed" : "failed"; run.finishedAt = new Date().toISOString(); await this.store.putRun(run); return { run, agents: result.agents }; }
+  async doctor() { return runDoctor(); }
+  async baseline(runId: string) { const config = await loadConfig(), run = await this.status(runId), plan = await this.store.getPlan(run.planId); if (!plan) throw new Error(`Plan not found: ${run.planId}`); const uiCases = new Set(plan.cases.filter(item => item.category === "ui").map(item => item.id)); const directory = config.target.visualBaselinesDir ?? `${config.artifactsDir}/visual-baselines`; await mkdir(directory, { recursive: true }); const files: string[] = []; for (const execution of run.executions.filter(item => uiCases.has(item.testCaseId))) { const screenshot = execution.evidence.find(item => item.kind === "screenshot"); if (!screenshot) continue; const file = `${directory}/${execution.testCaseId}-${execution.viewportProfile ?? "default"}.png`; await copyFile(screenshot.path, file); files.push(file); } return { runId, files }; }
 }

@@ -1,5 +1,27 @@
 node_modules/
 dist/
 .testswarm/
+.testswarm-*/
 playwright-report/
 test-results/
+coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+testswarm.config.json
+testswarm.seeded.config.json
+testswarm.config.local.json
+testswarm.config.*.local.json
+
+# Databases and runtime logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+npm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "testswarm": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "dist/src/mcp-server/index.js"
+      ],
+      "env": {}
+    }
+  }
+}

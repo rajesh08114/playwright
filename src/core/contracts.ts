@@ -10,6 +10,9 @@ export const ApplicationTarget = z.object({
   allowedOrigins: z.array(z.string().url()).min(1),
   startPath: z.string().startsWith("/"),
   executablePath: z.string().min(1).optional(),
+  visualBaselinesDir: z.string().optional(),
+  viewportProfileName: z.string().optional(),
+  storageStatePath: z.string().min(1).optional(),
   browser: z.enum(["chromium", "firefox", "webkit"]).default("chromium"),
   actionTimeoutMs: z.number().int().positive().max(120_000).default(10_000),
   navigationTimeoutMs: z.number().int().positive().max(120_000).default(30_000),
@@ -19,6 +22,8 @@ export const ApplicationTarget = z.object({
 
 export const ProjectConfiguration = z.object({
   schemaVersion: z.literal(1), name: z.string().min(1), artifactsDir: z.string().default(".testswarm"), target: ApplicationTarget,
+  benchmarkOraclePath: z.string().optional(),
+  testData: z.object({ setupUrl: z.string().url(), cleanupUrl: z.string().url().optional(), fixturePath: z.string().optional(), timeoutMs: z.number().int().positive().max(30_000).default(10_000) }).optional(),
   budgets: z.object({ maxRoutes: z.number().int().positive().max(1000).default(25), maxCases: z.number().int().positive().max(1000).default(100), maxRetries: z.number().int().nonnegative().max(3).default(1), maxConcurrency: z.number().int().positive().max(8).default(1) }).default({ maxRoutes: 25, maxCases: 100, maxRetries: 1, maxConcurrency: 1 }),
   policy: z.object({ allowDestructiveActions: z.boolean().default(false), allowExternalNetwork: z.boolean().default(false), redactSecrets: z.boolean().default(true) }).default({ allowDestructiveActions: false, allowExternalNetwork: false, redactSecrets: true })
 });
@@ -40,8 +45,14 @@ export const ComponentObservation = z.object({ id: z.string(), route: z.string()
 export const WorkflowTransition = z.object({ from: z.string(), action: z.string(), to: z.string(), confidence: z.number().min(0).max(1) });
 export const AgentTask = z.object({ id: z.string(), runId: z.string(), agent: z.string(), status: z.enum(["queued", "running", "completed", "failed", "cancelled"]), budgetMs: z.number().int().positive(), input: z.record(z.unknown()) });
 export const AgentResult = z.object({ taskId: z.string(), status: z.enum(["completed", "failed", "cancelled"]), observations: z.array(z.string()), evidence: z.array(EvidenceArtifact), error: z.string().optional() });
+export type AgentTask = z.infer<typeof AgentTask>;
+export type AgentResult = z.infer<typeof AgentResult>;
 export const CoverageRecord = z.object({ feature: z.string(), testCaseIds: z.array(z.string()), executions: z.number().int().nonnegative(), covered: z.boolean() });
 export const ApprovalRequest = z.object({ id: z.string(), action: z.enum(["destructive_test", "source_change", "external_llm"]), reason: z.string(), status: z.enum(["pending", "approved", "denied"]), createdAt: z.string() });
+export const TestDataFixture = z.object({ id: z.string(), description: z.string(), data: z.record(z.unknown()), cleanupRequired: z.boolean().default(false) });
+export type TestDataFixture = z.infer<typeof TestDataFixture>;
+export const SeededDefect = z.object({ id: z.string(), route: z.string(), description: z.string(), expectedCategories: z.array(Category) });
+export type SeededDefect = z.infer<typeof SeededDefect>;
 export const DiscoveredRoute = z.object({ path: z.string(), title: z.string().optional(), heading: z.string().optional(), source: z.enum(["browser-observed", "configured"]), confidence: z.number().min(0).max(1), links: z.array(z.string()), forms: z.number().int().nonnegative(), interactiveElements: z.number().int().nonnegative() });
 export const ApplicationFeature = z.object({ id: z.string(), name: z.string(), routePaths: z.array(z.string()), confidence: z.number().min(0).max(1), observations: z.array(z.string()) });
 export const DiscoveryResult = z.object({ schemaVersion: z.literal(1), startedAt: z.string(), finishedAt: z.string(), routes: z.array(DiscoveredRoute), features: z.array(ApplicationFeature), warnings: z.array(z.string()) });

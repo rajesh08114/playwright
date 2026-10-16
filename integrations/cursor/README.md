@@ -1,3 +1,3 @@
 # Cursor adapter
 
-Register the generic stdio MCP server in Cursor's MCP settings using the command in `integrations/generic`. No Cursor-specific engine code is required. The host invocation flow is documented but not runtime-verified in this repository.
+The repository includes `.cursor/mcp.json` for Cursor's workspace MCP configuration. Cursor 3.17.8 is installed locally and the CLI accepts workspace operations, but an interactive agent invocation was not run automatically because it requires opening the user's GUI/session.

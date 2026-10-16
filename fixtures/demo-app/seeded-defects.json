@@ -1,0 +1,3 @@
+[
+  { "id": "DEMO-MISSING-HEADING", "route": "/seeded/missing-heading", "description": "The route intentionally has no heading.", "expectedCategories": ["functional", "accessibility"] }
+]
