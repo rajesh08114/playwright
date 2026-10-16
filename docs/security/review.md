@@ -1,7 +1,18 @@
 # Security review status
 
-Implemented controls include explicit allowed origins, metadata-address rejection, same-origin browser routing, redirect checks, read-only default test cases, no automatic form submission, local SQLite persistence, optional storage-state authentication, disabled LLM by default, and a pinned MCP SDK with zero production dependency vulnerabilities at the time of the last audit.
+## Controls
 
-Before external deployment, review filesystem permissions for `.testswarm`, storage-state files, screenshots, traces, and MCP process credentials. Do not share those artifacts or authentication files with untrusted agents. Host-specific adapter invocation and remote MCP transport remain outside the verified surface.
+- **Network scope.** Every browser request is checked against `target.allowedOrigins`; others are aborted and recorded as policy-blocked. Top-level navigation and redirects outside the allowed origins fail the case even when `policy.allowExternalNetwork` is on. Cloud metadata endpoints and unspecified addresses are rejected at config load. Test-data endpoints must be allowed origins.
+- **No state changes by default.** Discovery never submits forms and skips links that look state-changing (logout, delete, remove, unsubscribe). Cases marked `reversible`/`destructive` are blocked unless `policy.allowDestructiveActions` is set.
+- **No arbitrary execution.** Neither the CLI nor the MCP server runs shell commands or user-supplied scripts. The MCP surface has no file-read or file-delete tools; `prune` is CLI-only.
+- **Human-in-the-loop for baselines.** Approving visual baselines is a separate, explicit action, marked destructive in MCP tool annotations; the plugin skill instructs the agent never to self-approve.
+- **Evidence handling.** Console and network evidence is redacted (bearer tokens, cookies, key/secret/password fields, URL query secrets, JWTs, common API-key formats) and written `0600`. The database is `0600` in a `0700` directory where the filesystem supports it.
+- **Model calls.** None. The LLM provider interface ships only with a disabled implementation.
+- **Dependencies.** MCP SDK pinned; `npm audit --omit=dev` runs in CI.
 
-Console and failed-network evidence is redacted before persistence and written with owner-only mode where supported by the host filesystem.
+## Residual risks
+
+- Screenshots, traces, and axe results are not redacted; they contain whatever the page displays. Use `policy.maskSelectors` for sensitive regions and treat `.testswarm/` as sensitive.
+- Storage-state files are credentials. Keep them out of version control and outside shared artifact uploads.
+- Redaction is pattern-based and cannot catch every secret format.
+- Host-specific adapter invocation and remote MCP transports have not been independently reviewed; deployments should do their own permission review and penetration testing.

@@ -1,16 +1,19 @@
 # Generic MCP integration
 
-The universal integration is the local stdio MCP server. Build first with `npm run build`, then configure the MCP client to launch:
+TestSwarm is a stdio MCP server. Configure your client to launch it with the project directory in `TESTSWARM_PROJECT_DIR`:
 
 ```json
 {
   "mcpServers": {
     "testswarm": {
-      "command": "node",
-      "args": ["/absolute/path/to/testswarm-ai/dist/src/mcp-server/index.js"]
+      "command": "npx",
+      "args": ["-y", "-p", "testswarm-ai@0.1.0", "testswarm-mcp"],
+      "env": { "TESTSWARM_PROJECT_DIR": "/absolute/path/to/your/project" }
     }
   }
 }
 ```
 
-This configuration has not been validated against a specific external host in this repository.
+From a source checkout, use `"command": "node", "args": ["/absolute/path/to/testswarm/dist/src/mcp-server/index.js"]` after `npm run build`.
+
+`testswarm_run` returns a `runId` immediately; poll `testswarm_status`. Pass `"wait": true` only for small plans, since long tool calls may exceed client timeouts.

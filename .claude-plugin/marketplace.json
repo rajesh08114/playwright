@@ -1,0 +1,11 @@
+{
+  "name": "testswarm",
+  "owner": { "name": "rajesh08114" },
+  "plugins": [
+    {
+      "name": "testswarm",
+      "source": "./plugin",
+      "description": "Browser testing MCP server and skill for Claude Code, built on Playwright."
+    }
+  ]
+}

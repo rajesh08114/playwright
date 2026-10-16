@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "testswarm": {
+      "command": "npx",
+      "args": ["-y", "-p", "testswarm-ai@0.1.0", "testswarm-mcp"]
+    }
+  }
+}
