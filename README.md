@@ -10,6 +10,7 @@ What each route is checked for:
 | accessibility | axe-core scan | Any violation at or above `policy.accessibilityFailOn` (default `serious`) |
 | responsive | Document width per viewport | Horizontal overflow |
 | ui | Full-page screenshot vs. approved baseline | Changed pixels exceed `policy.visualMaxDiffRatio`; **blocked** (not passed) until a baseline is approved |
+| journey | Multi-step user flow you define (or a model proposes) | Any step fails; the error names the step number and what was observed |
 
 TestSwarm does not replace application-specific test design, security testing, or human release approval. It never submits forms, never follows links that look state-changing (logout, delete, ...), and never navigates outside `target.allowedOrigins`.
 
@@ -39,6 +40,75 @@ On the first run every UI case is `blocked` because no visual baselines exist. O
 
 Once published to npm, the same commands are available as `npx testswarm ...`.
 
+## User journeys
+
+Route checks only load and inspect pages. To test what users *do*, add journeys to the config. Each step is a structured action (no scripts), and elements are located the way users perceive them:
+
+```json
+"journeys": [
+  {
+    "id": "search",
+    "title": "Search finds mugs",
+    "startPath": "/search",
+    "steps": [
+      { "type": "fill", "target": { "label": "Search products" }, "value": "mug" },
+      { "type": "click", "target": { "role": "button", "name": "Search" } },
+      { "type": "expectUrl", "path": "q=mug" },
+      { "type": "expectText", "target": { "role": "heading", "name": "Results for mug" }, "text": "mug" }
+    ]
+  }
+]
+```
+
+- Actions: `goto`, `click`, `fill`, `select`, `check`, `press`, `waitFor`, `expectVisible`, `expectHidden`, `expectText`, `expectUrl`, `expectTitle`.
+- Targets: exactly one of `role` (+ optional `name`), `label`, `text`, `placeholder`, `testId`, or `css`.
+- Secrets: `"valueFromEnv": "MY_PASSWORD"` instead of `"value"`. The value is read from the environment at run time, never stored, never shown in reports, and a case that uses one is never traced. If the variable is unset, the case is `blocked`.
+- Journeys that change data should declare `"destructive": "reversible"` or `"destructive"`; they only run when `policy.allowDestructiveActions` is on.
+- Journeys appear in plans as `TS-JRNY-<id>` cases (ahead of route checks) and export as real Playwright steps.
+
+## Scripted login
+
+For apps behind a sign-in, describe the login once; TestSwarm signs in before discovery and runs, saves the session (owner-only file), and reuses it until `maxAgeMinutes` passes:
+
+```json
+"auth": {
+  "loginPath": "/login",
+  "successPath": "/account",
+  "maxAgeMinutes": 60,
+  "steps": [
+    { "type": "fill", "target": { "label": "Email" }, "valueFromEnv": "APP_TEST_EMAIL" },
+    { "type": "fill", "target": { "label": "Password" }, "valueFromEnv": "APP_TEST_PASSWORD" },
+    { "type": "click", "target": { "role": "button", "name": "Sign in" } }
+  ]
+}
+```
+
+`testswarm login` signs in on demand; `doctor` checks the variables are set. If login fails, the run fails immediately with the failing step instead of testing every page logged out. Use a dedicated test account.
+
+## Model-assisted planning (optional)
+
+`testswarm plan-ai` crawls the app, sends an **accessibility-tree snapshot** of up to `llm.maxRoutes` pages to Claude, and asks for realistic user journeys. It is off by default; enable it explicitly:
+
+```json
+"llm": { "enabled": true, "model": "claude-opus-5-5", "effort": "medium", "maxRoutes": 10, "maxJourneysPerRoute": 3 }
+```
+
+Credentials come from `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login` profile. Safeguards:
+
+- Snapshots are redacted with the evidence redactor and truncated (`llm.maxSnapshotChars`) before they leave the machine; page text is treated as untrusted data in the prompt.
+- The model can only fill a fixed JSON schema of the actions above. Every proposal is re-validated; anything referencing a page that wasn't shown, containing an invalid step, or lacking an assertion is rejected, not repaired.
+- A proposed journey that types, selects, presses keys, or clicks anything but a link is marked `reversible`, so it stays **blocked** until you review it (proposals are written to `.testswarm/ai/proposed-journeys-<plan-id>.json`) and copy it into `journeys` or enable `policy.allowDestructiveActions`.
+- The request uses structured outputs, a cached system prompt, and server-side refusal fallbacks; the command prints token usage.
+
+## Deep-agent exploration (optional, best results)
+
+`testswarm plan-agent` goes further than `plan-ai`: a [LangGraph Deep Agent](https://docs.langchain.com/oss/javascript/deepagents/overview) plans coverage route by route, hands each route to an isolated `route-explorer` subagent, and **runs every candidate journey in the real browser**. When a journey fails, the subagent gets the failing step, the error, and a fresh page snapshot, fixes the journey, and tries again. Only journeys whose exact steps passed join the plan; everything else (and any candidate defects the agent noticed) goes to `.testswarm/ai/agent-exploration-<plan-id>.json` for review.
+
+- Uses the same `llm` settings plus limits: `"agent": { "maxTrials": 40, "recursionLimit": 250, "timeoutMinutes": 20 }`. Hitting a limit stops the agent and keeps what it verified.
+- Read-only by default: the agent may only *execute* journeys made of navigation, link clicks, waits, and checks. Interactive journeys (typing, buttons, forms) are submitted unexecuted for review. Point it at a **disposable test environment** and set `policy.allowDestructiveActions` to let it verify interactive flows too.
+- The agent acts only through TestSwarm's validated action schema and allowed origins; its scratch files live in memory; it has no disk or shell access.
+- Needs the optional packages `deepagents`, `@langchain/anthropic`, `@langchain/core`, `@langchain/langgraph`, `langchain` (installed by default with npm; `doctor` checks them). Design notes: `docs/architecture/deep-agent.md`.
+
 ## CLI
 
 ```text
@@ -49,15 +119,20 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | --- | --- |
 | `init [--base-url <url>]` | Write a starter `testswarm.config.json` |
 | `inspect` | Print the validated configuration |
-| `doctor` | Check Node, configuration, storage, browser launch, target reachability |
+| `doctor` | Check Node, configuration, storage, which browser starts, target reachability |
+| `install-browser [--with-deps]` | Download the browser build this Playwright version expects |
 | `discover` | Crawl and list routes |
 | `plan` | Plan from `target.startPath` + `target.routes` (no crawl) |
-| `plan-discovered` | Crawl, then plan |
+| `plan-discovered` | Crawl, then plan (includes configured journeys) |
+| `plan-ai` | Crawl, then add model-proposed journeys (requires `llm.enabled`) |
+| `plan-agent` | Crawl, then let a deep agent explore and add only journeys it verified (requires `llm.enabled`) |
+| `login` | Run the configured login and save the session |
 | `run <plan-id>` | Execute a plan |
 | `retest <run-id>` | Re-run only what did not pass, as a new run |
-| `resume <run-id> [--force]` | Continue an interrupted, failed, or cancelled run in place |
+| `resume <run-id> [--force]` | Continue an interrupted, failed, cancelled, or stale run in place |
 | `repeat <plan-id> [count]` | Run 2-10 times and list unstable cases |
 | `cancel <run-id>` | Cancel a run, including one executing in another process |
+| `status <run-id>` | Progress; flags runs whose process stopped (no heartbeat for 2 minutes) as `stale` |
 | `runs`, `status`, `results`, `evidence` | Inspect runs |
 | `report <run-id>` | Write HTML, JSON, and JUnit reports |
 | `verify <run-id>` | Group failures into findings (`probable` when a case fails on every viewport) |
@@ -67,7 +142,7 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | `agents`, `agent-run <plan-id>` | Run the category-scoped specialist executors |
 | `prune [--keep n]` | Delete old runs and their artifacts (default `policy.retainRuns`) |
 
-Exit codes: `0` success, `1` test failures or failed checks, `2` usage or configuration error, `3` internal error. Output is human-readable by default; `--json` prints machine-readable JSON.
+Add `--headed` to any command to watch the browser. Exit codes: `0` success, `1` test failures, blocked cases, or failed checks, `2` usage or configuration error, `3` internal error. Output is human-readable by default; `--json` prints machine-readable JSON.
 
 ### CI usage
 
@@ -93,6 +168,8 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
 | `target.startPath` | required | Where discovery starts |
 | `target.routes` | `[]` | Extra routes to plan and crawl (in addition to links and `sitemap.xml`) |
 | `target.browser` | `chromium` | `chromium`, `firefox`, or `webkit` |
+| `target.headless` | `true` | `false` shows the browser window (or use `--headed` / `TESTSWARM_HEADED=1`) |
+| `target.slowMoMs` | `0` | Pause between browser actions, for watching headed runs |
 | `target.executablePath` | managed | Browser binary; falls back to `TESTSWARM_BROWSER_PATH`, then Playwright's managed browser |
 | `target.viewportProfiles` | `[]` | Named viewports; every case runs once per profile (or once at `target.viewport`) |
 | `target.storageStatePath` | none | Playwright storage-state file for authenticated pages |
@@ -111,10 +188,13 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
 | `policy.allowDestructiveActions` | `false` | Allow cases marked `reversible` / `destructive` |
 | `policy.redactSecrets` | `true` | Redact tokens, cookies, and keys from console and network evidence |
 | `testData` | none | HTTP setup/cleanup endpoints called around each run (must be allowed origins) |
+| `journeys` | `[]` | User journeys (see above) |
+| `auth` | none | Scripted login (see above); overrides `target.storageStatePath` |
+| `llm` | off | Model-assisted planning (see above) |
 
 ## MCP server and Claude Code plugin
 
-`npm run mcp` (or `testswarm-mcp` once installed) starts a stdio MCP server exposing `testswarm_*` tools. Long operations return immediately: `testswarm_run` returns a `runId`; poll `testswarm_status`. Tool errors are returned as MCP tool errors, and tools carry read-only/destructive hints. The server uses `TESTSWARM_PROJECT_DIR` if set, otherwise the directory the client launches it in.
+`npm run mcp` (or `testswarm-mcp` once installed) starts a stdio MCP server exposing `testswarm_*` tools. Long operations return immediately: `testswarm_run` returns a `runId`; poll `testswarm_status`, which includes next steps. Responses are compact summaries (`testswarm_get_plan` and `testswarm_results` with `includePassed` give details), and `testswarm_screenshot` returns the page image so the assistant can see what was tested. Tool errors are returned as MCP tool errors, and tools carry read-only/destructive hints. The server uses `TESTSWARM_PROJECT_DIR` if set, otherwise the directory the client launches it in.
 
 - **This repository:** `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor) run the local build.
 - **Claude Code plugin:** `plugin/` contains the plugin (MCP server + a `browser-testing` skill that teaches the plan → run → poll → review → retest loop and forbids self-approving baselines). After the package is published to npm, install with:
@@ -125,6 +205,16 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
   ```
 
 - **Other MCP clients:** see `integrations/generic/README.md`.
+
+## Troubleshooting
+
+**The browser does not start.** Run `testswarm doctor`; its `browser` line says which browser launched or what was tried. TestSwarm tries, in order: `target.executablePath` / `TESTSWARM_BROWSER_PATH` (only that, when set); the build this Playwright version expects; other Chromium builds Playwright has downloaded; installed Google Chrome; installed Microsoft Edge. If none starts, run `testswarm install-browser` (add `--with-deps` on Linux to install system libraries too). A `warn` on that line means a fallback browser is in use; tests run, but `install-browser` gives the most consistent results.
+
+**I want to see the browser.** Add `--headed` to any command (or set `TESTSWARM_HEADED=1`, or `"headless": false` in `target`); `"slowMoMs": 250` slows each action down so you can follow it. On Linux without a desktop, run under `xvfb-run`.
+
+**The MCP server does not connect.** In this repository, `.mcp.json` starts `scripts/mcp.mjs`, which builds the server if needed and then starts it; build errors go to the MCP client's log (stderr). If it reports missing dependencies, run `npm install`. Check that the client starts the server in the project directory, or set `TESTSWARM_PROJECT_DIR`. To test the server by hand: `npm run mcp` and look for errors on stderr.
+
+**A run says `blocked`.** Nothing failed, but some cases need a person: usually visual checks without an approved baseline. `testswarm status <run-id>` lists the next steps. Look at the screenshots (or `testswarm_screenshot` through MCP), then `testswarm baseline <run-id>`.
 
 ## Generated data and security
 

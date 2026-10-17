@@ -22,6 +22,10 @@ export interface Store {
   isCancelRequested(runId: string): Promise<boolean>;
   /** Deletes all but the newest `keep` runs and returns the deleted run ids. */
   pruneRuns(keep: number): Promise<string[]>;
+  /** Records that the process executing a run is alive. */
+  heartbeat(runId: string): Promise<void>;
+  /** Last time the run was written or heartbeated (ISO), used to detect runs whose process died. */
+  lastActivity(runId: string): Promise<string | undefined>;
   close(): void;
 }
 
@@ -115,6 +119,12 @@ export class SqliteStore implements Store {
     return Boolean(row?.cancel_requested);
   }
 
+  async heartbeat(runId: string) { this.db.prepare("UPDATE runs SET updated_at=? WHERE id=?").run(new Date().toISOString(), runId); }
+
+  async lastActivity(runId: string) {
+    return (this.db.prepare("SELECT updated_at FROM runs WHERE id=?").get(runId) as { updated_at: string } | undefined)?.updated_at;
+  }
+
   async pruneRuns(keep: number) {
     const rows = this.db.prepare("SELECT id FROM runs WHERE status NOT IN ('running','queued') ORDER BY COALESCE(started_at, updated_at) DESC LIMIT -1 OFFSET ?").all(keep) as Array<{ id: string }>;
     const remove = this.db.prepare("DELETE FROM runs WHERE id=?");
@@ -128,16 +138,18 @@ export class SqliteStore implements Store {
 /** File-backed store for tests and migration tooling. Not safe for concurrent processes. */
 export class JsonStore implements Store {
   constructor(private readonly file: string) {}
-  private async state(): Promise<{ plans: Record<string, TestPlan>; runs: Record<string, TestRun & { cancelRequested?: boolean }> }> {
+  private async state(): Promise<{ plans: Record<string, TestPlan>; runs: Record<string, TestRun & { cancelRequested?: boolean; activityAt?: string }> }> {
     try { return JSON.parse(await readFile(this.file, "utf8")); } catch { return { plans: {}, runs: {} }; }
   }
   private async save(state: Awaited<ReturnType<JsonStore["state"]>>) { await mkdir(dirname(this.file), { recursive: true }); await writeFile(this.file, JSON.stringify(state, null, 2)); }
   async putPlan(plan: TestPlan) { const s = await this.state(); s.plans[plan.id] = plan; await this.save(s); }
   async getPlan(id: string) { return (await this.state()).plans[id]; }
-  async putRun(run: TestRun) { const s = await this.state(); const existing = s.runs[run.id]; s.runs[run.id] = { ...run, executions: existing?.executions ?? [], cancelRequested: existing?.cancelRequested }; await this.save(s); }
-  async addExecution(runId: string, execution: TestExecution) { const s = await this.state(); const run = s.runs[runId]; if (!run) throw new Error(`Run not found: ${runId}`); run.executions = [...run.executions.filter(item => item.id !== execution.id), execution]; await this.save(s); }
-  async getRun(id: string) { const run = (await this.state()).runs[id]; if (!run) return undefined; const { cancelRequested: _, ...rest } = run; return rest; }
-  async listRuns(limit = 100) { return Object.values((await this.state()).runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit).map(({ cancelRequested: _, ...rest }) => rest); }
+  async putRun(run: TestRun) { const s = await this.state(); const existing = s.runs[run.id]; s.runs[run.id] = { ...run, executions: existing?.executions ?? [], cancelRequested: existing?.cancelRequested, activityAt: new Date().toISOString() }; await this.save(s); }
+  async addExecution(runId: string, execution: TestExecution) { const s = await this.state(); const run = s.runs[runId]; if (!run) throw new Error(`Run not found: ${runId}`); run.executions = [...run.executions.filter(item => item.id !== execution.id), execution]; run.activityAt = new Date().toISOString(); await this.save(s); }
+  async getRun(id: string) { const run = (await this.state()).runs[id]; if (!run) return undefined; const { cancelRequested: _, activityAt: __, ...rest } = run; return rest; }
+  async listRuns(limit = 100) { return Object.values((await this.state()).runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit).map(({ cancelRequested: _, activityAt: __, ...rest }) => rest); }
+  async heartbeat(runId: string) { const s = await this.state(); if (s.runs[runId]) { s.runs[runId].activityAt = new Date().toISOString(); await this.save(s); } }
+  async lastActivity(runId: string) { return (await this.state()).runs[runId]?.activityAt; }
   async requestCancel(runId: string, requested = true) { const s = await this.state(); if (s.runs[runId]) { s.runs[runId].cancelRequested = requested; await this.save(s); } }
   async isCancelRequested(runId: string) { return Boolean((await this.state()).runs[runId]?.cancelRequested); }
   async pruneRuns(keep: number) { const s = await this.state(); const old = Object.values(s.runs).filter(run => !["running", "queued"].includes(run.status)).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(keep); for (const run of old) delete s.runs[run.id]; await this.save(s); return old.map(run => run.id); }

@@ -1,12 +1,14 @@
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { chromium, firefox, webkit, type Browser, type BrowserType, type Page } from "playwright";
+import type { Browser, Page } from "playwright";
+import { launchBrowser } from "./browsers.js";
 import AxeBuilder from "@axe-core/playwright";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { ApplicationTarget, EvidenceArtifact, Impact, Policy, TestCase, TestExecution } from "../core/contracts.js";
 import { redactSensitive } from "../evidence/redact.js";
+import { MissingSecretError, runActions, usesSecrets } from "./actions.js";
 
 export interface ExecutionHooks { afterLaunch?: (browser: Browser) => Promise<void>; }
 export interface ExecutionOptions {
@@ -18,18 +20,16 @@ export interface ExecutionOptions {
 
 const DEFAULT_POLICY = Policy.parse({});
 const IMPACT_RANK: Record<Impact, number> = { minor: 0, moderate: 1, serious: 2, critical: 3 };
-const INFRASTRUCTURE_ERROR = /executable doesn't exist|browser has been closed|target page, context or browser has been closed|browser disconnected|failed to launch|browserType\.launch/i;
+const INFRASTRUCTURE_ERROR = /could not start|executable doesn't exist|browser has been closed|target page, context or browser has been closed|browser disconnected|failed to launch|browserType\.launch/i;
+// The application under test is not reachable at all: an environment problem, not a product defect.
+const UNREACHABLE_TARGET = /ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_CONNECTION_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED|ECONNREFUSED|ENOTFOUND|NS_ERROR_CONNECTION_REFUSED|Could not connect to server/i;
+/** Playwright errors append a multi-line call log; reports and agents only need the first line. */
+export const firstLine = (message: string) => message.split("\n")[0].trim();
 
 /** A deliberate test verdict that is not a failure of the product (missing baseline, policy refusal). */
 class BlockedError extends Error {}
 
-export function browserType(target: ApplicationTarget): BrowserType {
-  return target.browser === "firefox" ? firefox : target.browser === "webkit" ? webkit : chromium;
-}
-
-export function launchBrowser(target: ApplicationTarget) {
-  return browserType(target).launch({ headless: true, executablePath: target.executablePath ?? (process.env.TESTSWARM_BROWSER_PATH || undefined) });
-}
+export { browserType, launchBrowser } from "./browsers.js";
 
 /** Lazily launches one browser and relaunches it if it disconnects, so a crash costs one case, not the run. */
 export class BrowserPool {
@@ -91,7 +91,8 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
     if (!browser) { browser = ownBrowser = await launchBrowser(target); }
     if (options.hooks?.afterLaunch) await options.hooks.afterLaunch(browser);
     context = await browser.newContext({ baseURL: target.baseUrl, viewport: target.viewport, storageState: target.storageStatePath, reducedMotion: "reduce" });
-    if (policy.trace !== "off") { await context.tracing.start({ screenshots: true, snapshots: true }); tracing = true; }
+    // Traces record typed text, so a case that fills secrets from the environment is never traced.
+    if (policy.trace !== "off" && !usesSecrets(testCase.actions)) { await context.tracing.start({ screenshots: true, snapshots: true }); tracing = true; }
     await context.route("**/*", async route => {
       const request = route.request(), requestUrl = new URL(request.url());
       const isAllowedOrigin = allowed.has(requestUrl.origin) || ["data:", "blob:"].includes(requestUrl.protocol);
@@ -135,6 +136,15 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
         if (widths.document > widths.viewport) failures.push(`Horizontal overflow: document is ${widths.document}px wide in a ${widths.viewport}px viewport`);
         break;
       }
+      case "journey": {
+        try { await runActions(page, testCase.actions ?? [], { baseUrl: target.baseUrl, allowedOrigins: allowed, timeoutMs: target.actionTimeoutMs }); }
+        catch (error) {
+          if (error instanceof MissingSecretError) throw new BlockedError(error.message);
+          failures.push(redact(error instanceof Error ? error.message : String(error)));
+        }
+        if (policy.failOnConsoleErrors && consoleErrors.length) failures.push(`${consoleErrors.length} console error(s): ${redact(consoleErrors[0]).slice(0, 200)}`);
+        break;
+      }
       case "ui":
         break;
       default:
@@ -146,8 +156,9 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
     if (testCase.category === "ui") await compareWithBaseline(screenshot);
     return failures.length ? finish("failed", failures.join("; ")) : finish("passed");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = firstLine(error instanceof Error ? error.message : String(error));
     if (error instanceof BlockedError) return finish("blocked", message);
+    if (UNREACHABLE_TARGET.test(message)) return finish("infrastructure_failure", `Target not reachable: ${message}`);
     return finish(INFRASTRUCTURE_ERROR.test(message) ? "infrastructure_failure" : "failed", [...failures, message].join("; "));
   }
 
