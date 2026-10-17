@@ -1,0 +1,8 @@
+{
+  "name": "testswarm",
+  "version": "0.1.0",
+  "description": "Browser testing for the app you are building: crawl routes, run functional, accessibility, responsive, and visual checks with Playwright, and review evidence-backed reports.",
+  "author": { "name": "rajesh08114" },
+  "repository": "https://github.com/rajesh08114/playwright",
+  "keywords": ["testing", "playwright", "accessibility", "visual-regression"]
+}

@@ -2,26 +2,56 @@
   "name": "testswarm-ai",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first multi-agent web application testing engine",
+  "description": "Local-first browser testing engine and MCP server built on Playwright: discovery, functional, accessibility, responsive, and visual checks with evidence and reports",
+  "keywords": [
+    "playwright",
+    "testing",
+    "accessibility",
+    "visual-regression",
+    "mcp",
+    "claude-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rajesh08114/playwright.git"
+  },
   "type": "module",
-  "bin": { "testswarm": "dist/src/cli/index.js" },
+  "bin": {
+    "testswarm": "dist/src/cli/index.js",
+    "testswarm-mcp": "dist/src/mcp-server/index.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "CHANGELOG.md",
+    "testswarm.config.example.json"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/tests/**/*.test.js",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-concurrency=1 \"dist/tests/**/*.test.js\"",
+    "test:unit": "npm run build && node --test \"dist/tests/unit/*.test.js\" \"dist/tests/adapters/*.test.js\"",
+    "test:browser": "npm run build && node --test --test-concurrency=1 \"dist/tests/browser/*.test.js\"",
     "start": "node dist/src/cli/index.js",
     "mcp": "node dist/src/mcp-server/index.js",
-    "demo": "node fixtures/demo-app/server.mjs"
+    "demo": "node fixtures/demo-app/server.mjs",
+    "prepublishOnly": "npm run lint && npm test"
   },
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "dependencies": {
     "@axe-core/playwright": "^4.10.2",
     "@modelcontextprotocol/sdk": "1.31.0",
+    "pixelmatch": "^7.2.0",
     "playwright": "^1.52.0",
+    "pngjs": "^7.0.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/pngjs": "^6.0.5",
     "typescript": "^5.7.3"
   }
 }

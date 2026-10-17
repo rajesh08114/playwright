@@ -1,165 +1,161 @@
 # TestSwarm AI
 
-TestSwarm AI is a local-first, multi-agent browser testing engine built on Playwright. It discovers routes, plans coverage, executes browser checks, stores run history in SQLite, captures evidence, reports defects, and exposes the workflow through both a CLI and MCP server.
+TestSwarm is a local-first browser testing engine built on Playwright. It crawls the routes of a web application, plans deterministic checks for each route, runs them in a real browser across viewport profiles, stores results in SQLite, captures evidence (screenshots, traces, axe results, console and network logs), and writes HTML, JSON, and JUnit reports. It is usable as a CLI, as an MCP server, and as a Claude Code plugin.
 
-The project is currently a production-oriented foundation and reference implementation. It is designed to run safely against an explicitly configured target; it does not claim to replace application-specific test design, security testing, or human release approval.
+What each route is checked for:
+
+| Category | Check | Fails when |
+| --- | --- | --- |
+| functional | Page loads, heading visible | HTTP status >= 400, no visible heading, console errors (configurable), failed same-origin requests |
+| accessibility | axe-core scan | Any violation at or above `policy.accessibilityFailOn` (default `serious`) |
+| responsive | Document width per viewport | Horizontal overflow |
+| ui | Full-page screenshot vs. approved baseline | Changed pixels exceed `policy.visualMaxDiffRatio`; **blocked** (not passed) until a baseline is approved |
+
+TestSwarm does not replace application-specific test design, security testing, or human release approval. It never submits forms, never follows links that look state-changing (logout, delete, ...), and never navigates outside `target.allowedOrigins`.
 
 ## Requirements
 
-- Node.js 22.5 or newer. The default store uses Node's built-in `node:sqlite` module.
-- npm.
-- Chromium. Playwright can install a managed browser, or a local browser executable can be configured.
-
-Check the installed versions:
-
-```powershell
-node --version
-npm --version
-```
+- Node.js 22.13 or newer (uses the built-in `node:sqlite`).
+- A Playwright browser: `npx playwright install chromium`, or point `target.executablePath` / `TESTSWARM_BROWSER_PATH` at an existing Chromium.
 
 ## Quick start
 
-From the repository root:
+```sh
+npm install
+npm run build
+npx playwright install chromium
 
-```powershell
-npm.cmd install
-npm.cmd run build
-npm.cmd test
-npm.cmd run demo
-```
+# In another terminal: a demo target (add TESTSWARM_SEEDED_DEFECTS=1 for deliberate defects)
+npm run demo
 
-On Windows PowerShell, use `npm.cmd` if the local execution policy blocks `npm.ps1`.
-
-To install a Playwright-managed Chromium browser:
-
-```powershell
-npx.cmd playwright install chromium
-```
-
-The demo uses the included app in `fixtures/demo-app`. It starts a local target, discovers pages, creates a plan, executes it, and writes evidence under `.testswarm/`.
-
-## Run against a configured target
-
-Copy the example configuration and edit the target URL, routes, browser settings, and allowed origins:
-
-```powershell
-Copy-Item testswarm.config.example.json testswarm.config.json
-npm.cmd run build
-node dist/src/cli/index.js init
-node dist/src/cli/index.js inspect
+node dist/src/cli/index.js init --base-url http://127.0.0.1:3000
 node dist/src/cli/index.js doctor
-node dist/src/cli/index.js discover
-node dist/src/cli/index.js plan-discovered
-node dist/src/cli/index.js run <plan-id>
-node dist/src/cli/index.js report <run-id>
+node dist/src/cli/index.js plan-discovered          # prints a plan id
+node dist/src/cli/index.js run <plan-id>            # exit code 1 until everything passes
+node dist/src/cli/index.js report <run-id>          # HTML, JSON, and JUnit paths
 ```
 
-`testswarm.config.json` is intentionally ignored because it commonly contains a machine-specific browser path or target URL. Keep reusable, non-machine-specific defaults in `testswarm.config.example.json`.
+On the first run every UI case is `blocked` because no visual baselines exist. Open the screenshots (`testswarm evidence <run-id>` or the HTML report), and when they are correct approve them with `testswarm baseline <run-id>`. Later runs compare against them.
 
-Useful configuration concepts include:
+Once published to npm, the same commands are available as `npx testswarm ...`.
 
-- `target.baseUrl`: the application origin to test.
-- `target.allowedOrigins`: origins that navigation and test-data requests may access.
-- `target.routes`: known routes to include in discovery and planning.
-- `target.executablePath`: optional local browser executable; omit it to use Playwright's managed browser.
-- `profiles`: viewport/device profiles to exercise.
-- `policies`: retries, timeouts, evidence retention, and destructive-action controls.
-
-## CLI commands
-
-The CLI is available after `npm.cmd run build`:
+## CLI
 
 ```text
-node dist/src/cli/index.js <command> [options]
+testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 ```
-
-Common commands:
 
 | Command | Purpose |
 | --- | --- |
-| `init` | Initialize the local SQLite store. |
-| `inspect` | Show the loaded configuration and target summary. |
-| `doctor` | Check configuration, browser availability, storage, and safety settings. |
-| `discover` | Discover routes and page capabilities. |
-| `plan` | Create a plan from explicit routes or scenarios. |
-| `plan-discovered` | Create a plan from the latest discovery. |
-| `run <plan-id>` | Execute a plan. |
-| `status <run-id>` | Show current run status. |
-| `runs` | List recent runs. |
-| `results <run-id>` | Show test results. |
-| `evidence <run-id>` | List captured evidence. |
-| `verify <run-id>` | Verify deterministic seeded defects or run assertions. |
-| `retest <run-id>` | Re-run failed or selected cases. |
-| `resume <run-id>` | Resume an interrupted run when possible. |
-| `repeat <run-id>` | Repeat a run for stability analysis. |
-| `report <run-id>` | Produce a human-readable report. |
-| `export <run-id>` | Export run data and evidence metadata. |
-| `agents` / `agent-run` | Inspect and execute the multi-agent workflow. |
-| `benchmark` / `compare` / `baseline` | Measure and compare run performance. |
-| `cancel <run-id>` | Request cancellation of an active run. |
+| `init [--base-url <url>]` | Write a starter `testswarm.config.json` |
+| `inspect` | Print the validated configuration |
+| `doctor` | Check Node, configuration, storage, browser launch, target reachability |
+| `discover` | Crawl and list routes |
+| `plan` | Plan from `target.startPath` + `target.routes` (no crawl) |
+| `plan-discovered` | Crawl, then plan |
+| `run <plan-id>` | Execute a plan |
+| `retest <run-id>` | Re-run only what did not pass, as a new run |
+| `resume <run-id> [--force]` | Continue an interrupted, failed, or cancelled run in place |
+| `repeat <plan-id> [count]` | Run 2-10 times and list unstable cases |
+| `cancel <run-id>` | Cancel a run, including one executing in another process |
+| `runs`, `status`, `results`, `evidence` | Inspect runs |
+| `report <run-id>` | Write HTML, JSON, and JUnit reports |
+| `verify <run-id>` | Group failures into findings (`probable` when a case fails on every viewport) |
+| `baseline <run-id> [case-id...]` | Approve UI screenshots as visual baselines |
+| `benchmark <run-id>`, `compare <a> <b>` | Coverage, seeded-defect recall, run deltas |
+| `export <plan-id>` | Write an equivalent standalone `@playwright/test` spec |
+| `agents`, `agent-run <plan-id>` | Run the category-scoped specialist executors |
+| `prune [--keep n]` | Delete old runs and their artifacts (default `policy.retainRuns`) |
 
-Run `node dist/src/cli/index.js --help` for the complete option list.
+Exit codes: `0` success, `1` test failures or failed checks, `2` usage or configuration error, `3` internal error. Output is human-readable by default; `--json` prints machine-readable JSON.
 
-## MCP server
+### CI usage
 
-Build the project and start the stdio MCP server:
-
-```powershell
-npm.cmd run mcp
+```sh
+npx playwright install --with-deps chromium
+npx testswarm doctor
+PLAN=$(npx testswarm plan --json | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")
+npx testswarm run "$PLAN"; STATUS=$?
+npx testswarm report "$(npx testswarm runs --json --limit 1 | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d)[0].id))")"
+exit $STATUS
 ```
 
-Project-scoped client configurations are included for Claude Code and Cursor:
+Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check visuals, and publish the JUnit XML from `.testswarm/reports/` to your CI's test view. Baselines are browser- and OS-specific; approve them on the same platform CI runs on.
 
-- `.mcp.json`
-- `.cursor/mcp.json`
+## Configuration
 
-The server exposes safe tools for planning, discovery, execution, status, reporting, evidence, verification, retesting, recovery, benchmarking, and health checks. Keep the server pointed at an explicitly configured target and review generated evidence before using it in a release decision.
+`testswarm.config.json` in the project directory (override with `--project` / `TESTSWARM_PROJECT_DIR` and `--config` / `TESTSWARM_CONFIG`). Relative paths resolve against the project directory. See `testswarm.config.example.json`.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `target.baseUrl` | required | Origin of the application under test |
+| `target.allowedOrigins` | required | Origins the browser may load; must include `baseUrl`. Cloud metadata and unspecified addresses are rejected |
+| `target.startPath` | required | Where discovery starts |
+| `target.routes` | `[]` | Extra routes to plan and crawl (in addition to links and `sitemap.xml`) |
+| `target.browser` | `chromium` | `chromium`, `firefox`, or `webkit` |
+| `target.executablePath` | managed | Browser binary; falls back to `TESTSWARM_BROWSER_PATH`, then Playwright's managed browser |
+| `target.viewportProfiles` | `[]` | Named viewports; every case runs once per profile (or once at `target.viewport`) |
+| `target.storageStatePath` | none | Playwright storage-state file for authenticated pages |
+| `target.visualBaselinesDir` | `<artifactsDir>/visual-baselines` | Where approved baselines live |
+| `budgets.maxRoutes` | 25 | Discovery page limit |
+| `budgets.maxCases` | 100 | Plan size limit |
+| `budgets.maxRetries` | 1 | Retries for failed cases; a pass after a retry is reported `flaky` |
+| `budgets.maxConcurrency` | 1 | Parallel workers, each with its own browser |
+| `policy.accessibilityFailOn` | `serious` | Lowest axe impact that fails a case |
+| `policy.failOnConsoleErrors` | `true` | Console errors fail functional cases |
+| `policy.visualMaxDiffRatio` | `0.001` | Fraction of pixels allowed to differ |
+| `policy.maskSelectors` | `[]` | CSS selectors masked in screenshots (dynamic or sensitive content) |
+| `policy.trace` | `retain-on-failure` | `off`, `on`, or `retain-on-failure` Playwright traces |
+| `policy.retainRuns` | 50 | Runs kept by `prune` |
+| `policy.allowExternalNetwork` | `false` | Allow third-party subresources (top-level navigation stays restricted) |
+| `policy.allowDestructiveActions` | `false` | Allow cases marked `reversible` / `destructive` |
+| `policy.redactSecrets` | `true` | Redact tokens, cookies, and keys from console and network evidence |
+| `testData` | none | HTTP setup/cleanup endpoints called around each run (must be allowed origins) |
+
+## MCP server and Claude Code plugin
+
+`npm run mcp` (or `testswarm-mcp` once installed) starts a stdio MCP server exposing `testswarm_*` tools. Long operations return immediately: `testswarm_run` returns a `runId`; poll `testswarm_status`. Tool errors are returned as MCP tool errors, and tools carry read-only/destructive hints. The server uses `TESTSWARM_PROJECT_DIR` if set, otherwise the directory the client launches it in.
+
+- **This repository:** `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor) run the local build.
+- **Claude Code plugin:** `plugin/` contains the plugin (MCP server + a `browser-testing` skill that teaches the plan → run → poll → review → retest loop and forbids self-approving baselines). After the package is published to npm, install with:
+
+  ```text
+  /plugin marketplace add rajesh08114/playwright
+  /plugin install testswarm@testswarm
+  ```
+
+- **Other MCP clients:** see `integrations/generic/README.md`.
 
 ## Generated data and security
 
-Runtime output is written below `.testswarm/`, including the SQLite database, run records, reports, screenshots, accessibility results, visual baselines, and benchmark data. These files are local artifacts and are ignored by Git.
-
-The default safety model includes:
-
-- explicit allowed-origin checks for browser navigation and HTTP test-data requests;
-- no arbitrary shell execution through the CLI or MCP surface;
-- isolated browser contexts and optional storage-state handling;
-- redaction of common secrets from captured evidence;
-- controlled retries, timeouts, cancellation, and recovery records;
-- destructive-action and external-network policy gates.
-
-Do not commit real credentials, storage state, target data, screenshots containing sensitive information, local browser paths, or generated databases. Use environment variables or a secret manager for credentials in deployment environments.
-
-## Repository layout
-
-```text
-src/core/              contracts, configuration, engine, SQLite store
-src/browser-runtime/   Playwright execution and evidence capture
-src/discovery/         route and capability discovery
-src/planner/           coverage planning
-src/agents/            multi-agent orchestration
-src/benchmarks/        performance and comparison workflows
-src/mcp-server/        MCP tool server
-src/cli/               command-line interface
-tests/                 unit, adapter, recovery, and runtime tests
-fixtures/demo-app/     local demo target and seeded defects
-docs/                  architecture, security, roadmap, and checklists
-integrations/          client-specific setup notes
-```
+Everything is written under `artifactsDir` (default `.testswarm/`): the SQLite database (`0600`), run artifacts, reports, traces, baselines, and benchmarks. Treat it as sensitive: screenshots and traces can contain whatever the page shows. Use `policy.maskSelectors` for sensitive regions, keep storage-state files out of version control, and `prune` regularly. Details in `docs/security/review.md`.
 
 ## Development
 
-Run the checks used by CI or before a commit:
-
-```powershell
-npm.cmd run build
-npm.cmd test
-npm.cmd run lint
-npm.cmd audit --omit=dev
+```sh
+npm run lint          # type check
+npm test              # build + all tests (browser tests need Chromium)
+npm run test:unit     # no browser required
 ```
 
-The current automated suite covers contracts, configuration, planning, storage, discovery, runtime behavior, recovery, redaction, test data, agents, benchmarking, and health checks. Review `docs/implementation/production-checklist.md` for the remaining environment-specific release validation items.
+Set `TESTSWARM_BROWSER_PATH` to use an existing Chromium in tests. Layout:
 
-## License
+```text
+src/core/              contracts, config, engine, SQLite store, doctor
+src/browser-runtime/   Playwright execution, checks, and evidence capture
+src/discovery/         same-origin crawler
+src/planner/           deterministic case generation
+src/reporting/         HTML / JSON / JUnit
+src/verification/      failure grouping into findings
+src/agents/            category-scoped specialist executors
+src/benchmarks/        coverage, recall, run comparison
+src/mcp-server/        MCP stdio server
+src/cli/               command-line interface
+plugin/                Claude Code plugin (manifest, MCP config, skill)
+tests/unit, adapters   fast tests; tests/browser: Playwright-backed tests
+fixtures/demo-app/     demo target with optional seeded defects
+```
 
-No license has been selected for this repository yet. Add a license file before distributing the project outside the intended development team.
+## Status and license
+
+Version 0.1.0. See `CHANGELOG.md` and `docs/implementation/production-checklist.md`. No license has been chosen yet and the package is marked `private`; both must be decided by the owner before publishing to npm (which the plugin's MCP configuration depends on).

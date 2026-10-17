@@ -1,15 +1,40 @@
 import { randomUUID } from "node:crypto";
 import { TestPlan, TestCase, DiscoveryResult } from "../core/contracts.js";
-export function createStarterPlan(feature = "homepage"): TestPlan {
-  const cases: TestCase[] = [{ id: "TS-HOME-001", title: "Homepage loads with a meaningful heading", feature, category: "functional", priority: "high", preconditions: [], steps: ["Navigate to the configured start path"], assertions: ["The page has a visible heading"], expectedOutcome: "A user can identify the page purpose", requiredEvidence: ["screenshot", "console"], timeoutMs: 30000, destructive: "none" }];
-  return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases };
+
+/** Stable, filesystem-safe identifier for a route, so case ids (and visual baselines) survive rediscovery. */
+export function routeSlug(route: string) {
+  const slug = route.replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return (slug || "root").slice(0, 80);
 }
-export function createPlanFromDiscovery(discovery: DiscoveryResult): TestPlan {
-  const cases: TestCase[] = discovery.routes.flatMap((route, index) => [
-    { id: `TS-DISC-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} loads correctly`, feature: route.heading || route.title || route.path, category: "functional", priority: index === 0 ? "high" : "medium", preconditions: [], steps: [`Navigate to ${route.path}`], assertions: ["The document loads without a navigation error", "A meaningful heading is visible"], expectedOutcome: "The route is usable and identifiable", requiredEvidence: ["screenshot", "console", "network"], timeoutMs: 30000, destructive: "none" },
-    { id: `TS-A11Y-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} exposes keyboard-reachable controls`, feature: route.heading || route.title || route.path, category: "accessibility", priority: "medium", preconditions: [], steps: [`Navigate to ${route.path}`, "Move focus through interactive controls"], assertions: ["Interactive controls have accessible names"], expectedOutcome: "Keyboard users can identify controls", requiredEvidence: ["screenshot", "console"], timeoutMs: 30000, destructive: "none" }
-    , { id: `TS-RESP-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} has no horizontal overflow`, feature: route.heading || route.title || route.path, category: "responsive", priority: "medium", preconditions: [], steps: [`Navigate to ${route.path}`, "Inspect the layout at configured viewport profiles"], assertions: ["The document does not overflow horizontally"], expectedOutcome: "Content remains usable across configured viewport profiles", requiredEvidence: ["screenshot", "json"], timeoutMs: 30000, destructive: "none" }
-    , { id: `TS-UI-${String(index + 1).padStart(3, "0")}`, title: `Route ${route.path} matches its approved visual baseline`, feature: route.heading || route.title || route.path, category: "ui", priority: "low", preconditions: ["An approved visual baseline exists"], steps: [`Navigate to ${route.path}`, "Capture the rendered page"], assertions: ["The rendered screenshot matches the approved baseline"], expectedOutcome: "Visual regressions are detected deterministically", requiredEvidence: ["screenshot"], timeoutMs: 30000, destructive: "none" }
-  ]);
-  return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases };
+
+export function createStarterPlan(feature = "homepage", startPath = "/"): TestPlan {
+  return createPlanForRoutes([{ path: startPath, feature }], { categories: ["functional"] });
+}
+
+export interface PlanOptions { categories?: TestCase["category"][]; maxCases?: number; }
+
+/** Builds the deterministic case set for each route. Steps and assertions describe exactly what the runner checks. */
+export function createPlanForRoutes(routes: Array<{ path: string; feature: string }>, options: PlanOptions = {}): TestPlan {
+  const categories = new Set(options.categories ?? ["functional", "accessibility", "responsive", "ui"]);
+  const seen = new Set<string>();
+  const cases: TestCase[] = routes.flatMap((route, index) => {
+    let slug = routeSlug(route.path);
+    while (seen.has(slug)) slug = `${slug}-${index}`;
+    seen.add(slug);
+    const common = { feature: route.feature, preconditions: [] as string[], timeoutMs: 30000, destructive: "none" as const };
+    const navigate = `Navigate to ${route.path}`;
+    const all: TestCase[] = [
+      { ...common, id: `TS-FUNC-${slug}`, title: `${route.path} loads with a visible heading`, category: "functional", priority: index === 0 ? "high" : "medium", steps: [navigate], assertions: ["The response status is below 400", "A heading is visible", "No console errors or failed same-origin requests occur"], expectedOutcome: "The route is usable and identifiable", requiredEvidence: ["screenshot", "console", "network"] },
+      { ...common, id: `TS-A11Y-${slug}`, title: `${route.path} has no blocking accessibility violations`, category: "accessibility", priority: "medium", steps: [navigate, "Run an axe-core accessibility scan"], assertions: ["No axe violations at or above policy.accessibilityFailOn"], expectedOutcome: "Assistive-technology users can use the route", requiredEvidence: ["screenshot", "accessibility"] },
+      { ...common, id: `TS-RESP-${slug}`, title: `${route.path} has no horizontal overflow`, category: "responsive", priority: "medium", steps: [navigate, "Measure document width at each viewport profile"], assertions: ["The document does not overflow horizontally"], expectedOutcome: "Content fits every configured viewport", requiredEvidence: ["screenshot"] },
+      { ...common, id: `TS-UI-${slug}`, title: `${route.path} matches its approved visual baseline`, category: "ui", priority: "low", preconditions: ["An approved visual baseline exists"], steps: [navigate, "Capture a full-page screenshot and diff it against the baseline"], assertions: ["Changed pixels stay within policy.visualMaxDiffRatio"], expectedOutcome: "Visual regressions are detected", requiredEvidence: ["screenshot"] }
+    ];
+    return all.filter(item => categories.has(item.category));
+  });
+  const limited = options.maxCases ? cases.slice(0, options.maxCases) : cases;
+  return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases: limited };
+}
+
+export function createPlanFromDiscovery(discovery: DiscoveryResult, options: PlanOptions = {}): TestPlan {
+  return createPlanForRoutes(discovery.routes.map(route => ({ path: route.path, feature: route.heading || route.title || route.path })), options);
 }

@@ -4,18 +4,51 @@
   "artifactsDir": ".testswarm",
   "target": {
     "baseUrl": "http://127.0.0.1:3000",
-    "allowedOrigins": ["http://127.0.0.1:3000"],
+    "allowedOrigins": [
+      "http://127.0.0.1:3000"
+    ],
     "startPath": "/",
     "browser": "chromium",
     "actionTimeoutMs": 10000,
     "navigationTimeoutMs": 30000,
-    "viewport": { "width": 1280, "height": 720 },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
     "viewportProfiles": [
-      { "name": "mobile", "width": 390, "height": 844 },
-      { "name": "tablet", "width": 768, "height": 1024 },
-      { "name": "desktop", "width": 1280, "height": 720 }
-    ]
+      {
+        "name": "mobile",
+        "width": 390,
+        "height": 844
+      },
+      {
+        "name": "tablet",
+        "width": 768,
+        "height": 1024
+      },
+      {
+        "name": "desktop",
+        "width": 1280,
+        "height": 720
+      }
+    ],
+    "routes": []
   },
-  "budgets": { "maxRoutes": 25, "maxCases": 100, "maxRetries": 1, "maxConcurrency": 1 },
-  "policy": { "allowDestructiveActions": false, "allowExternalNetwork": false, "redactSecrets": true }
+  "budgets": {
+    "maxRoutes": 25,
+    "maxCases": 200,
+    "maxRetries": 1,
+    "maxConcurrency": 2
+  },
+  "policy": {
+    "accessibilityFailOn": "serious",
+    "failOnConsoleErrors": true,
+    "visualMaxDiffRatio": 0.001,
+    "maskSelectors": [],
+    "trace": "retain-on-failure",
+    "retainRuns": 50,
+    "allowDestructiveActions": false,
+    "allowExternalNetwork": false,
+    "redactSecrets": true
+  }
 }

@@ -1,3 +1,5 @@
 [
-  { "id": "DEMO-MISSING-HEADING", "route": "/seeded/missing-heading", "description": "The route intentionally has no heading.", "expectedCategories": ["functional", "accessibility"] }
+  { "id": "DEMO-MISSING-HEADING", "route": "/seeded/missing-heading", "description": "The route intentionally has no heading.", "expectedCategories": ["functional"] },
+  { "id": "DEMO-UNLABELLED-INPUT", "route": "/seeded/unlabelled-input", "description": "A text input and a button have no accessible name.", "expectedCategories": ["accessibility"] },
+  { "id": "DEMO-OVERFLOW", "route": "/seeded/overflow", "description": "A 1600px-wide element overflows narrow viewports.", "expectedCategories": ["responsive"] }
 ]
