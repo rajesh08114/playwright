@@ -42,7 +42,8 @@ export const Journey = z.object({
 }).strict();
 export type Journey = z.infer<typeof Journey>;
 export const Priority = z.enum(["critical", "high", "medium", "low"]);
-export const RunStatus = z.enum(["queued", "running", "completed", "failed", "cancelled"]);
+// "blocked": nothing failed, but some cases could not be decided without a person (missing baseline, policy, secret).
+export const RunStatus = z.enum(["queued", "running", "completed", "failed", "blocked", "cancelled"]);
 export const Outcome = z.enum(["passed", "failed", "flaky", "infrastructure_failure", "inconclusive", "blocked"]);
 
 export const ApplicationTarget = z.object({
@@ -58,7 +59,11 @@ export const ApplicationTarget = z.object({
   navigationTimeoutMs: z.number().int().positive().max(120_000).default(30_000),
   viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).default({ width: 1280, height: 720 }),
   viewportProfiles: z.array(z.object({ name: z.string().min(1), width: z.number().int().positive(), height: z.number().int().positive() })).max(8).default([]),
-  routes: z.array(z.string().startsWith("/")).max(1000).default([])
+  routes: z.array(z.string().startsWith("/")).max(1000).default([]),
+  /** Set false (or TESTSWARM_HEADED=1) to watch the browser while it works. */
+  headless: z.boolean().default(true),
+  /** Delay between browser operations, useful together with headless: false. */
+  slowMoMs: z.number().int().nonnegative().max(5000).default(0)
 });
 
 /** Scripted login. Credentials come only from environment variables referenced by fill steps (valueFromEnv). */

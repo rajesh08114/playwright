@@ -5,8 +5,8 @@ import { readFile } from "node:fs/promises";
 const json = async (path: string) => JSON.parse(await readFile(path, "utf8"));
 
 test("Claude and Cursor workspace MCP configs point at the shared server", async () => {
-  assert.deepEqual((await json(".mcp.json")).mcpServers.testswarm.args, ["dist/src/mcp-server/index.js"]);
-  assert.deepEqual((await json(".cursor/mcp.json")).mcpServers.testswarm.args, ["dist/src/mcp-server/index.js"]);
+  assert.deepEqual((await json(".mcp.json")).mcpServers.testswarm.args, ["scripts/mcp.mjs"]);
+  assert.deepEqual((await json(".cursor/mcp.json")).mcpServers.testswarm.args, ["scripts/mcp.mjs"]);
 });
 
 test("plugin manifest, marketplace, and plugin MCP config agree with the package", async () => {

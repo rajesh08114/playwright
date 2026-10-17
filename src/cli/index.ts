@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import "../core/quiet-warnings.js";
 import { parseArgs } from "node:util";
-import { ConfigError, Engine, NotFoundError, UsageError, latestExecutions } from "../core/engine.js";
+import { ConfigError, Engine, NotFoundError, UsageError, latestExecutions, nextSteps } from "../core/engine.js";
 import { summarize } from "../reporting/report.js";
 import { VERSION } from "../core/version.js";
+import { installBrowser } from "../browser-runtime/browsers.js";
 import type { TestRun } from "../core/contracts.js";
 
 const HELP = `testswarm ${VERSION} - local-first browser testing engine built on Playwright
@@ -14,6 +15,7 @@ Setup
   init [--base-url <url>]          Write a starter testswarm.config.json
   inspect                          Print the validated configuration
   doctor                           Check Node, config, storage, browser, and target
+  install-browser [--with-deps]    Download the browser build this Playwright version expects
 
 Planning
   discover                         Crawl the target and list routes
@@ -49,6 +51,7 @@ Options
   -p, --project <dir>              Project directory (default: $TESTSWARM_PROJECT_DIR or cwd)
   -c, --config <file>              Config file relative to the project (default: testswarm.config.json)
       --json                       Machine-readable JSON output
+      --headed                     Show the browser window while it works (same as TESTSWARM_HEADED=1)
   -h, --help                       Show this help
   -v, --version                    Show the version
 
@@ -61,7 +64,7 @@ const { values, positionals } = (() => {
       options: {
         project: { type: "string", short: "p" }, config: { type: "string", short: "c" }, json: { type: "boolean" },
         help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" }, force: { type: "boolean" },
-        limit: { type: "string" }, keep: { type: "string" }, "base-url": { type: "string" }
+        limit: { type: "string" }, keep: { type: "string" }, "base-url": { type: "string" }, headed: { type: "boolean" }, "with-deps": { type: "boolean" }
       }
     });
   } catch (error) { console.error((error as Error).message); console.error('Run "testswarm --help" for usage.'); process.exit(2); }
@@ -69,6 +72,7 @@ const { values, positionals } = (() => {
 
 const [command, ...args] = positionals;
 const json = Boolean(values.json);
+if (values.headed) process.env.TESTSWARM_HEADED = "1";
 const engine = new Engine({ projectDir: values.project, configPath: values.config });
 
 function out(value: unknown, human?: () => string) { console.log(json || !human ? JSON.stringify(value, null, 2) : human()); }
@@ -82,7 +86,7 @@ function int(value: string | undefined, name: string, fallback?: number) {
 function runSummary(run: TestRun) {
   const s = summarize(latestExecutions(run));
   const lines = [`Run ${run.id}: ${run.status}`, `  ${s.total} executions: ${s.passed} passed, ${s.failed} failed, ${s.flaky} flaky, ${s.blocked} blocked, ${s.infrastructure} infrastructure`];
-  if (run.error) lines.push(`  Error: ${run.error}`);
+  for (const step of nextSteps(run)) lines.push(`  Next: ${step}`);
   for (const execution of latestExecutions(run).filter(item => item.outcome !== "passed")) lines.push(`  ${execution.outcome.padEnd(22)} ${execution.testCaseId} [${execution.viewportProfile ?? "default"}] ${execution.error ?? ""}`.trimEnd());
   return lines.join("\n");
 }
@@ -94,6 +98,10 @@ async function main(): Promise<number> {
   switch (command) {
     case "init": { const result = await engine.init(values["base-url"]); out(result, () => result.created ? `Created ${result.path}. Edit target.baseUrl, then run "testswarm doctor".` : `${result.path} already exists; left unchanged.`); return 0; }
     case "inspect": out(await engine.inspect()); return 0;
+    case "install-browser": {
+      const config = await engine.config().catch(() => undefined);
+      return installBrowser(config?.target.browser ?? "chromium", { withDeps: values["with-deps"] });
+    }
     case "doctor": { const result = await engine.doctor(); out(result, () => result.checks.map(check => `${check.status === "passed" ? "ok  " : check.status === "warning" ? "warn" : "FAIL"} ${check.name.padEnd(18)} ${check.detail}`).join("\n")); return result.ok ? 0 : 1; }
     case "discover": { const result = await engine.discover(); out(result, () => [`Discovered ${result.routes.length} route(s):`, ...result.routes.map(route => `  ${route.path}  ${route.heading ?? route.title ?? ""}`), ...result.warnings.map(item => `  warning: ${item}`)].join("\n")); return 0; }
     case "login": { const result = await engine.login(); out(result, () => `Logged in; session saved to ${result.storageStatePath} (reused for ${result.maxAgeMinutes} minutes).`); return 0; }

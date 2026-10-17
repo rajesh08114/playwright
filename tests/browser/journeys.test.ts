@@ -141,7 +141,7 @@ test("a running run whose process stopped heartbeating is reported stale and res
     assert.equal((await engine.progress("fresh")).stale, false);
     await assert.rejects(() => engine.resume("fresh"), /still running/);
     const resumed = await engine.resume("orphan");
-    assert.ok(["completed", "failed"].includes(resumed.status));
+    assert.ok(["completed", "failed", "blocked"].includes(resumed.status), resumed.status);
     assert.ok(resumed.executions.length > 0);
   } finally { engine.close(); }
 });

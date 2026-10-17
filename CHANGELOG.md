@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+### Fixed (end-to-end reliability)
+- **Browser start-up**: when the build Playwright expects is missing (the usual state right after an install or upgrade), TestSwarm now falls back to other downloaded Chromium builds, then installed Chrome, then Edge, and says which one it used. When nothing starts, the error lists every attempt and the fix. Playwright is pinned to an exact version so builds no longer drift. New `install-browser` command and `testswarm_install_browser` MCP tool.
+- **MCP start-up**: `.mcp.json` now launches `scripts/mcp.mjs`, which builds the server when `dist/` is missing or stale (output to stderr) before starting it, so a fresh clone or `git pull` no longer leaves the client with a server that fails to connect.
+- **MCP responses**: planning, results, report, and agent tools return compact summaries instead of whole objects (a 4-page plan went from ~10 KB to under 3 KB; reports from ~25 KB to a summary); `testswarm_get_plan`, `includePassed`, and evidence filters give details on request.
+- **Run status**: a run with no failures but cases waiting on a person (missing baselines, policy, secrets) now ends `blocked` instead of `failed`, and `status`/CLI output include plain-language next steps.
+- Headed mode on Linux without a display now fails with a clear message instead of "browser has been closed".
+
 ### Added
+- `testswarm_screenshot` MCP tool: returns the page image (or visual diff/baseline) for a case so the assistant can see the UI it tested.
+- Headed runs: `--headed`, `TESTSWARM_HEADED=1`, `target.headless`, and `target.slowMoMs`.
+- End-to-end MCP test: a real MCP client drives the server through the launcher from an empty project to a green run, with no browser path configured.
 - **Deep-agent exploration** (`plan-agent`, `testswarm_plan_with_agent`): a LangGraph Deep Agent plans coverage with `write_todos`, delegates each route to an isolated `route-explorer` subagent, runs candidate journeys in the real browser, self-corrects from the failing step and a fresh snapshot, and adds only journeys that passed. Read-only execution by default; trial, recursion, and time budgets; candidate defects and token usage recorded for review. LangChain packages are optional dependencies loaded only by this command.
 - `npm run audit` (CI): fails on high/critical advisories except a documented, test-enforced allowlist (currently the unpatched `braces` advisory, unreachable from TestSwarm).
 - **User journeys**: multi-step flows defined as structured actions (click, fill, select, press, expect text/URL/title, ...) with accessible locators. Failures name the step. Secrets come from environment variables, are never stored or traced, and a missing secret blocks the case.

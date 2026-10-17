@@ -119,7 +119,8 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | --- | --- |
 | `init [--base-url <url>]` | Write a starter `testswarm.config.json` |
 | `inspect` | Print the validated configuration |
-| `doctor` | Check Node, configuration, storage, browser launch, target reachability |
+| `doctor` | Check Node, configuration, storage, which browser starts, target reachability |
+| `install-browser [--with-deps]` | Download the browser build this Playwright version expects |
 | `discover` | Crawl and list routes |
 | `plan` | Plan from `target.startPath` + `target.routes` (no crawl) |
 | `plan-discovered` | Crawl, then plan (includes configured journeys) |
@@ -141,7 +142,7 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | `agents`, `agent-run <plan-id>` | Run the category-scoped specialist executors |
 | `prune [--keep n]` | Delete old runs and their artifacts (default `policy.retainRuns`) |
 
-Exit codes: `0` success, `1` test failures or failed checks, `2` usage or configuration error, `3` internal error. Output is human-readable by default; `--json` prints machine-readable JSON.
+Add `--headed` to any command to watch the browser. Exit codes: `0` success, `1` test failures, blocked cases, or failed checks, `2` usage or configuration error, `3` internal error. Output is human-readable by default; `--json` prints machine-readable JSON.
 
 ### CI usage
 
@@ -167,6 +168,8 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
 | `target.startPath` | required | Where discovery starts |
 | `target.routes` | `[]` | Extra routes to plan and crawl (in addition to links and `sitemap.xml`) |
 | `target.browser` | `chromium` | `chromium`, `firefox`, or `webkit` |
+| `target.headless` | `true` | `false` shows the browser window (or use `--headed` / `TESTSWARM_HEADED=1`) |
+| `target.slowMoMs` | `0` | Pause between browser actions, for watching headed runs |
 | `target.executablePath` | managed | Browser binary; falls back to `TESTSWARM_BROWSER_PATH`, then Playwright's managed browser |
 | `target.viewportProfiles` | `[]` | Named viewports; every case runs once per profile (or once at `target.viewport`) |
 | `target.storageStatePath` | none | Playwright storage-state file for authenticated pages |
@@ -191,7 +194,7 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
 
 ## MCP server and Claude Code plugin
 
-`npm run mcp` (or `testswarm-mcp` once installed) starts a stdio MCP server exposing `testswarm_*` tools. Long operations return immediately: `testswarm_run` returns a `runId`; poll `testswarm_status`. Tool errors are returned as MCP tool errors, and tools carry read-only/destructive hints. The server uses `TESTSWARM_PROJECT_DIR` if set, otherwise the directory the client launches it in.
+`npm run mcp` (or `testswarm-mcp` once installed) starts a stdio MCP server exposing `testswarm_*` tools. Long operations return immediately: `testswarm_run` returns a `runId`; poll `testswarm_status`, which includes next steps. Responses are compact summaries (`testswarm_get_plan` and `testswarm_results` with `includePassed` give details), and `testswarm_screenshot` returns the page image so the assistant can see what was tested. Tool errors are returned as MCP tool errors, and tools carry read-only/destructive hints. The server uses `TESTSWARM_PROJECT_DIR` if set, otherwise the directory the client launches it in.
 
 - **This repository:** `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor) run the local build.
 - **Claude Code plugin:** `plugin/` contains the plugin (MCP server + a `browser-testing` skill that teaches the plan → run → poll → review → retest loop and forbids self-approving baselines). After the package is published to npm, install with:
@@ -202,6 +205,16 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
   ```
 
 - **Other MCP clients:** see `integrations/generic/README.md`.
+
+## Troubleshooting
+
+**The browser does not start.** Run `testswarm doctor`; its `browser` line says which browser launched or what was tried. TestSwarm tries, in order: `target.executablePath` / `TESTSWARM_BROWSER_PATH` (only that, when set); the build this Playwright version expects; other Chromium builds Playwright has downloaded; installed Google Chrome; installed Microsoft Edge. If none starts, run `testswarm install-browser` (add `--with-deps` on Linux to install system libraries too). A `warn` on that line means a fallback browser is in use; tests run, but `install-browser` gives the most consistent results.
+
+**I want to see the browser.** Add `--headed` to any command (or set `TESTSWARM_HEADED=1`, or `"headless": false` in `target`); `"slowMoMs": 250` slows each action down so you can follow it. On Linux without a desktop, run under `xvfb-run`.
+
+**The MCP server does not connect.** In this repository, `.mcp.json` starts `scripts/mcp.mjs`, which builds the server if needed and then starts it; build errors go to the MCP client's log (stderr). If it reports missing dependencies, run `npm install`. Check that the client starts the server in the project directory, or set `TESTSWARM_PROJECT_DIR`. To test the server by hand: `npm run mcp` and look for errors on stderr.
+
+**A run says `blocked`.** Nothing failed, but some cases need a person: usually visual checks without an approved baseline. `testswarm status <run-id>` lists the next steps. Look at the screenshots (or `testswarm_screenshot` through MCP), then `testswarm baseline <run-id>`.
 
 ## Generated data and security
 

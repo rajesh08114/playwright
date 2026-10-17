@@ -2,7 +2,7 @@
   "mcpServers": {
     "testswarm": {
       "command": "node",
-      "args": ["dist/src/mcp-server/index.js"]
+      "args": ["scripts/mcp.mjs"]
     }
   }
 }

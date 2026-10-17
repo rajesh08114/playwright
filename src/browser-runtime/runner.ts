@@ -1,7 +1,8 @@
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { chromium, firefox, webkit, type Browser, type BrowserType, type Page } from "playwright";
+import type { Browser, Page } from "playwright";
+import { launchBrowser } from "./browsers.js";
 import AxeBuilder from "@axe-core/playwright";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
@@ -19,18 +20,12 @@ export interface ExecutionOptions {
 
 const DEFAULT_POLICY = Policy.parse({});
 const IMPACT_RANK: Record<Impact, number> = { minor: 0, moderate: 1, serious: 2, critical: 3 };
-const INFRASTRUCTURE_ERROR = /executable doesn't exist|browser has been closed|target page, context or browser has been closed|browser disconnected|failed to launch|browserType\.launch/i;
+const INFRASTRUCTURE_ERROR = /could not start|executable doesn't exist|browser has been closed|target page, context or browser has been closed|browser disconnected|failed to launch|browserType\.launch/i;
 
 /** A deliberate test verdict that is not a failure of the product (missing baseline, policy refusal). */
 class BlockedError extends Error {}
 
-export function browserType(target: ApplicationTarget): BrowserType {
-  return target.browser === "firefox" ? firefox : target.browser === "webkit" ? webkit : chromium;
-}
-
-export function launchBrowser(target: ApplicationTarget) {
-  return browserType(target).launch({ headless: true, executablePath: target.executablePath ?? (process.env.TESTSWARM_BROWSER_PATH || undefined) });
-}
+export { browserType, launchBrowser } from "./browsers.js";
 
 /** Lazily launches one browser and relaunches it if it disconnects, so a crash costs one case, not the run. */
 export class BrowserPool {

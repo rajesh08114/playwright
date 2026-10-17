@@ -39,7 +39,30 @@ const STALE_AFTER_MS = 2 * 60_000;
 const HEARTBEAT_MS = 15_000;
 
 interface WorkItem { testCase: TestCase; profile: { name: string; width: number; height: number } }
-const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled"]);
+
+/** Final status from the latest execution of each case: failures win, then cases waiting on a person. */
+export function outcomeStatus(executions: TestExecution[]): TestRun["status"] {
+  if (executions.every(isGreen)) return "completed";
+  return executions.some(item => item.outcome === "failed" || item.outcome === "infrastructure_failure") ? "failed" : "blocked";
+}
+
+/** Plain-language next steps for a finished run, so people and agents know what to do with it. */
+export function nextSteps(run: TestRun): string[] {
+  const latest = latestExecutions(run), steps: string[] = [];
+  const count = (outcome: TestExecution["outcome"]) => latest.filter(item => item.outcome === outcome).length;
+  const missingBaselines = latest.filter(item => item.outcome === "blocked" && /Missing visual baseline/.test(item.error ?? "")).length;
+  if (run.status === "running") return [`Still running: poll status for ${run.id}.`];
+  if (run.error) steps.push(`The run stopped early: ${run.error}`);
+  if (count("infrastructure_failure")) steps.push(`${count("infrastructure_failure")} execution(s) could not run because of the environment (browser or target). Run doctor.`);
+  if (count("failed")) steps.push(`${count("failed")} execution(s) failed: review them with verify ${run.id} and the screenshots, fix, then retest ${run.id}.`);
+  if (missingBaselines) steps.push(`${missingBaselines} visual check(s) have no approved baseline yet. Look at the screenshots; if they are correct, approve them with baseline ${run.id}, then run the plan again.`);
+  const otherBlocked = count("blocked") - missingBaselines;
+  if (otherBlocked) steps.push(`${otherBlocked} case(s) were blocked by policy or a missing secret; see each case's error.`);
+  if (count("flaky")) steps.push(`${count("flaky")} case(s) passed only after a retry (flaky).`);
+  if (!steps.length && run.status === "completed") steps.push("Everything passed.");
+  return steps;
+}
 const executionKey = (item: { testCaseId: string; viewportProfile?: string }) => `${item.testCaseId}@${item.viewportProfile ?? "default"}`;
 const isGreen = (execution: TestExecution) => execution.outcome === "passed" || execution.outcome === "flaky";
 
@@ -249,7 +272,7 @@ export class Engine {
       }));
       if (await store.isCancelRequested(run.id)) return await this.finalize(run.id, "cancelled");
       const current = (await store.getRun(run.id))!;
-      return await this.finalize(run.id, latestExecutions(current).every(isGreen) ? "completed" : "failed");
+      return await this.finalize(run.id, outcomeStatus(latestExecutions(current)));
     } catch (error) {
       return await this.finalize(run.id, "failed", error instanceof Error ? error.message : String(error));
     } finally {
@@ -282,7 +305,7 @@ export class Engine {
   async progress(id: string) {
     const run = await this.status(id);
     const stale = await this.isStale(run);
-    return { runId: run.id, planId: run.planId, status: run.status, completedExecutions: run.executions.length, expectedExecutions: run.expectedExecutions, summary: summarize(latestExecutions(run)), startedAt: run.startedAt, finishedAt: run.finishedAt, error: run.error, activeInThisProcess: this.active.has(id), stale, ...(stale ? { hint: `No activity for over ${STALE_AFTER_MS / 60_000} minutes; its process probably exited. Resume it with "testswarm resume ${run.id}".` } : {}) };
+    return { runId: run.id, planId: run.planId, status: run.status, completedExecutions: run.executions.length, expectedExecutions: run.expectedExecutions, summary: summarize(latestExecutions(run)), nextSteps: nextSteps(run), startedAt: run.startedAt, finishedAt: run.finishedAt, error: run.error, activeInThisProcess: this.active.has(id), stale, ...(stale ? { hint: `No activity for over ${STALE_AFTER_MS / 60_000} minutes; its process probably exited. Resume it with "testswarm resume ${run.id}".` } : {}) };
   }
 
   /** True when a run is marked running but no process has written to it recently. */
@@ -422,7 +445,7 @@ export class Engine {
     try {
       const result = await runSpecialists({ target: config.target, artifactsDir: join(config.artifactsDir, "agent-runs", run.id), retryBudget: config.budgets.maxRetries, policy: config.policy, onExecution: execution => store.addExecution(run.id, execution), shouldCancel: () => store.isCancelRequested(run.id) }, plan.cases);
       const finished = (await store.getRun(run.id))!;
-      const status = (await store.isCancelRequested(run.id)) ? "cancelled" : latestExecutions(finished).every(isGreen) && result.agents.every(agent => agent.status === "completed") ? "completed" : "failed";
+      const status = (await store.isCancelRequested(run.id)) ? "cancelled" : result.agents.every(agent => agent.status === "completed") ? outcomeStatus(latestExecutions(finished)) : "failed";
       return { run: await this.finalize(run.id, status), agents: result.agents };
     } catch (error) {
       return { run: await this.finalize(run.id, "failed", error instanceof Error ? error.message : String(error)), agents: [] };

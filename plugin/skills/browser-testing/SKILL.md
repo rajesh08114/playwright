@@ -9,10 +9,11 @@ TestSwarm runs deterministic Playwright checks against the target configured in 
 
 ## Workflow
 
-1. **Preflight.** Call `testswarm_doctor`. If the configuration is missing, ask the user for the URL of the running app and call `testswarm_init` with it as `baseUrl`. If the browser check fails, tell the user to run `npx playwright install chromium`. If the target is unreachable, ask the user to start their dev server; do not start servers yourself without asking.
+1. **Preflight.** Call `testswarm_doctor`. If the configuration is missing, ask the user for the URL of the running app and call `testswarm_init` with it as `baseUrl`. If the browser check fails, call `testswarm_install_browser` (it downloads about 150 MB; tell the user first), then `testswarm_doctor` again. A `warn` on the browser line means a fallback browser is in use and tests can proceed. If the target is unreachable, ask the user to start their dev server; do not start servers yourself without asking.
 2. **Plan.** Call `testswarm_plan_from_discovery` to crawl same-origin routes, or `testswarm_plan` to use only `target.startPath` and `target.routes`. Both include the user's configured `journeys`. Only call `testswarm_plan_with_ai` or `testswarm_plan_with_agent` if the user has enabled `llm` in the config: both send page snapshots to Anthropic. Prefer `testswarm_plan_with_agent` when the user wants the best journeys and can wait several minutes: it verifies each journey in the browser before adding it. Summarise the routes, journeys, and case counts for the user.
 3. **Run.** Call `testswarm_run` with the plan id. It returns a `runId` immediately. Poll `testswarm_status` (a few seconds apart) until `status` is no longer `running`.
-4. **Review.** Call `testswarm_verify` for grouped findings and `testswarm_report` for the HTML report path. Report failures with their route, category, viewport, and the observed error, and point to the screenshot or trace in `testswarm_evidence`.
+4. **Review.** Status `blocked` means nothing failed but some cases need the user, usually visual checks without baselines; follow the run's `nextSteps`. Use `testswarm_results` for what did not pass and `testswarm_screenshot` to look at a page before describing it.
+    Call `testswarm_verify` for grouped findings and `testswarm_report` for the HTML report path. Report failures with their route, category, viewport, and the observed error, and point to the screenshot or trace in `testswarm_evidence`.
 5. **Fix and retest.** After a fix, call `testswarm_retest` with the previous run id; it re-runs only what did not pass.
 
 ## Rules

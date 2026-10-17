@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { loadConfig, locateProject, type ProjectLocation } from "./config.js";
 import { SqliteStore } from "./store.js";
-import { launchBrowser } from "../browser-runtime/runner.js";
+import { launchBrowser, resolvedBrowser } from "../browser-runtime/browsers.js";
 
 type Check = { name: string; status: "passed" | "failed" | "warning"; detail: string };
 const message = (error: unknown) => error instanceof Error ? error.message.split("\n")[0] : String(error);
@@ -30,8 +30,13 @@ export async function runDoctor(location: ProjectLocation = locateProject(), opt
   }
 
   if (options.launchBrowser !== false) {
-    try { const browser = await launchBrowser(config.target); const version = browser.version(); await browser.close(); checks.push({ name: "browser", status: "passed", detail: `${config.target.browser} ${version}${config.target.executablePath ? ` (${config.target.executablePath})` : ""}` }); }
-    catch (error) { checks.push({ name: "browser", status: "failed", detail: `${message(error)}. Run "npx playwright install ${config.target.browser}" or set target.executablePath / TESTSWARM_BROWSER_PATH.` }); }
+    try {
+      const browser = await launchBrowser(config.target), version = browser.version();
+      await browser.close();
+      const used = resolvedBrowser(config.target) ?? config.target.browser;
+      const fallback = !used.startsWith("Playwright-managed") && !used.startsWith("configured");
+      checks.push({ name: "browser", status: fallback ? "warning" : "passed", detail: `${used} (${version})${fallback ? `. The build this Playwright version expects is not installed; run "testswarm install-browser" for the most reliable results` : ""}${config.target.headless === false || process.env.TESTSWARM_HEADED === "1" ? ", headed" : ""}` });
+    } catch (error) { checks.push({ name: "browser", status: "failed", detail: error instanceof Error ? error.message : String(error) }); }
   }
 
   if (options.probeTarget !== false) {
