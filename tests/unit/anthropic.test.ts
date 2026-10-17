@@ -62,3 +62,34 @@ test("refusals, truncation, and schema mismatches become LlmErrors", async () =>
     await assert.rejects(() => new AnthropicJourneyProposer(config, client).propose(snapshot, { maxJourneysPerRoute: 1 }), (error: Error) => error instanceof LlmError && pattern.test(error.message));
   }
 });
+
+test("the deep agent's LangChain model sends effort and fallbacks, and no sampling or forced tool choice", async () => {
+  const { createAnthropicChatModel } = await import("../../src/agents/deep/explorer.js");
+  const { tool } = await import("@langchain/core/tools");
+  const { z } = await import("zod");
+  const calls: Captured[] = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) });
+    return new Response(JSON.stringify({ id: "msg_2", type: "message", role: "assistant", model: "claude-opus-5-5", stop_reason: "tool_use", stop_sequence: null, content: [{ type: "tool_use", id: "toolu_1", name: "list_routes", input: {} }], usage: { input_tokens: 50, output_tokens: 5 } }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof globalThis.fetch;
+  const previous = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  try {
+    const model = await createAnthropicChatModel({ model: "claude-opus-5-5", effort: "high", clientOptions: { fetch, maxRetries: 0 } });
+    const listRoutes = tool(async () => "[]", { name: "list_routes", description: "List routes", schema: z.object({}) });
+    const reply = await (model as unknown as { bindTools(tools: unknown[]): { invoke(input: string): Promise<{ tool_calls?: Array<{ name: string }> }> } }).bindTools([listRoutes]).invoke("Explore the app");
+    assert.equal(reply.tool_calls?.[0]?.name, "list_routes");
+    const { body, headers } = calls[0];
+    assert.equal(body.model, "claude-opus-5-5");
+    assert.equal(body.fallbacks, "default");
+    assert.match(headers.get("anthropic-beta") ?? "", /server-side-fallback-2026-07-01/);
+    assert.equal(body.output_config.effort, "high");
+    assert.equal(body.temperature, undefined);
+    assert.equal(body.top_k, undefined);
+    assert.equal(body.thinking, undefined, "thinking left to the model default (adaptive on Opus 5.5)");
+    assert.ok(!body.tool_choice || body.tool_choice.type === "auto", `tool_choice ${JSON.stringify(body.tool_choice)}`);
+    assert.equal(body.tools[0].name, "list_routes");
+  } finally {
+    if (previous === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previous;
+  }
+});

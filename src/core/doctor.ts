@@ -52,6 +52,11 @@ export async function runDoctor(location: ProjectLocation = locateProject(), opt
     const credential = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"].find(name => process.env[name]);
     checks.push({ name: "llm", status: credential ? "passed" : "warning", detail: credential ? `${config.llm.model} via ${credential}; page snapshots are sent to Anthropic by "plan-ai"` : `No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN set; "plan-ai" will only work if an \`ant auth login\` profile exists` });
   }
+  if (config.llm?.enabled) {
+    const missing: string[] = [];
+    for (const name of ["deepagents", "@langchain/anthropic", "langchain"]) { try { await import(name); } catch { missing.push(name); } }
+    checks.push(missing.length ? { name: "agent-packages", status: "warning", detail: `"plan-agent" needs optional packages: npm install ${missing.join(" ")}` } : { name: "agent-packages", status: "passed", detail: `"plan-agent" available (deep agent, ${config.llm.agent.maxTrials} trials max${config.policy.allowDestructiveActions ? ", interactive" : ", read-only execution"})` });
+  }
   if (config.policy.allowExternalNetwork) checks.push({ name: "policy", status: "warning", detail: "policy.allowExternalNetwork is on: third-party subresources will load during tests" });
   if (config.policy.allowDestructiveActions) checks.push({ name: "policy", status: "warning", detail: "policy.allowDestructiveActions is on: cases marked destructive will execute" });
   return { schemaVersion: 1, ok: checks.every(check => check.status !== "failed"), checks };

@@ -100,6 +100,15 @@ Credentials come from `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant au
 - A proposed journey that types, selects, presses keys, or clicks anything but a link is marked `reversible`, so it stays **blocked** until you review it (proposals are written to `.testswarm/ai/proposed-journeys-<plan-id>.json`) and copy it into `journeys` or enable `policy.allowDestructiveActions`.
 - The request uses structured outputs, a cached system prompt, and server-side refusal fallbacks; the command prints token usage.
 
+## Deep-agent exploration (optional, best results)
+
+`testswarm plan-agent` goes further than `plan-ai`: a [LangGraph Deep Agent](https://docs.langchain.com/oss/javascript/deepagents/overview) plans coverage route by route, hands each route to an isolated `route-explorer` subagent, and **runs every candidate journey in the real browser**. When a journey fails, the subagent gets the failing step, the error, and a fresh page snapshot, fixes the journey, and tries again. Only journeys whose exact steps passed join the plan; everything else (and any candidate defects the agent noticed) goes to `.testswarm/ai/agent-exploration-<plan-id>.json` for review.
+
+- Uses the same `llm` settings plus limits: `"agent": { "maxTrials": 40, "recursionLimit": 250, "timeoutMinutes": 20 }`. Hitting a limit stops the agent and keeps what it verified.
+- Read-only by default: the agent may only *execute* journeys made of navigation, link clicks, waits, and checks. Interactive journeys (typing, buttons, forms) are submitted unexecuted for review. Point it at a **disposable test environment** and set `policy.allowDestructiveActions` to let it verify interactive flows too.
+- The agent acts only through TestSwarm's validated action schema and allowed origins; its scratch files live in memory; it has no disk or shell access.
+- Needs the optional packages `deepagents`, `@langchain/anthropic`, `@langchain/core`, `@langchain/langgraph`, `langchain` (installed by default with npm; `doctor` checks them). Design notes: `docs/architecture/deep-agent.md`.
+
 ## CLI
 
 ```text
@@ -115,6 +124,7 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | `plan` | Plan from `target.startPath` + `target.routes` (no crawl) |
 | `plan-discovered` | Crawl, then plan (includes configured journeys) |
 | `plan-ai` | Crawl, then add model-proposed journeys (requires `llm.enabled`) |
+| `plan-agent` | Crawl, then let a deep agent explore and add only journeys it verified (requires `llm.enabled`) |
 | `login` | Run the configured login and save the session |
 | `run <plan-id>` | Execute a plan |
 | `retest <run-id>` | Re-run only what did not pass, as a new run |

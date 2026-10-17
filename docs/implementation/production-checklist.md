@@ -21,6 +21,8 @@
 - [x] Scripted login: session saved owner-only and reused by journeys; wrong password fails with the failing step
 - [x] Model-assisted planning: snapshot capture, proposal validation and rejection, state-changing proposals blocked, refusal/truncation/auth errors surfaced (request shape verified against the SDK with a stubbed transport)
 - [x] Stale running runs detected and resumable without `--force`
+- [x] Deep agent: self-correction loop (fail, fix, pass) against the demo app, only verified journeys planned and green on a real run, read-only default refuses interactive trials, trial budget and recursion limit enforced, no disk/shell backends (offline scripted model)
+- [x] Deep agent production model: request shape through the real `ChatAnthropic` with a stubbed transport (effort, fallbacks, no sampling, no forced tool choice)
 
 ## Owner decisions before first public release
 
@@ -30,7 +32,8 @@
 
 ## Not yet implemented
 
-- [ ] A live `plan-ai` call against the Anthropic API (verified only with a stubbed transport; needs an API key)
+- [ ] Live `plan-ai` and `plan-agent` calls against the Anthropic API (verified only with stubbed transports and a scripted model; needs an API key)
+- [ ] Measure `plan-agent` vs `plan-ai` on a real application: share of proposed journeys that pass, defects found, tokens per verified journey
 - [ ] Quality evaluation of model-proposed journeys on real applications
 - [ ] Login flows that need MFA or CAPTCHA (use a pre-recorded `target.storageStatePath` for those)
 - [ ] Interactive validation inside Claude Code, Cursor, and Antigravity hosts

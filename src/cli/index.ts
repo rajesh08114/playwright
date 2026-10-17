@@ -20,6 +20,7 @@ Planning
   plan                             Plan from target.startPath and target.routes (no crawl)
   plan-discovered                  Crawl, then plan from discovered routes
   plan-ai                          Crawl, then add model-proposed journeys (needs llm.enabled)
+  plan-agent                       Crawl, then let a deep agent explore and verify journeys (needs llm.enabled)
   login                            Run the configured login and save the session
 
 Execution
@@ -104,6 +105,20 @@ async function main(): Promise<number> {
         result.rejected.length ? `${result.rejected.length} proposal(s) rejected as invalid.` : "",
         `Review: ${result.file}`,
         result.usage ? `Tokens: ${result.usage.inputTokens} in (${result.usage.cacheReadInputTokens} cached), ${result.usage.outputTokens} out on ${result.usage.model}.` : "",
+        `Run it with: testswarm run ${result.plan.id}`
+      ].filter(Boolean).join("\n"));
+      return 0;
+    }
+    case "plan-agent": {
+      const result = await engine.planWithAgent();
+      out(result, () => [
+        `Plan ${result.plan.id} with ${result.plan.cases.length} case(s), including ${result.verifiedJourneys} journey(s) the agent verified against the app.`,
+        result.forReview.length ? `${result.forReview.length} journey(s) need human review (unverified or state-changing): ${result.forReview.map(item => item.id).join(", ")}` : "",
+        result.findings ? `${result.findings} candidate defect(s) reported.` : "",
+        `Trials: ${result.trials.passed} passed, ${result.trials.failed} failed, ${result.trials.refused} refused by policy.`,
+        `Tokens: ${result.usage.inputTokens} in (${result.usage.cacheReadInputTokens} cached), ${result.usage.outputTokens} out over ${result.usage.modelCalls} model call(s).`,
+        result.stoppedEarly ? `Note: ${result.stoppedEarly}; results so far were kept.` : "",
+        `Review: ${result.file}`,
         `Run it with: testswarm run ${result.plan.id}`
       ].filter(Boolean).join("\n"));
       return 0;

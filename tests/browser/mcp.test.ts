@@ -14,7 +14,7 @@ test("MCP server lists tools, answers calls, and reports errors as tool errors",
   await client.connect(transport);
   try {
     const { tools } = await client.listTools();
-    for (const name of ["testswarm_doctor", "testswarm_run", "testswarm_status", "testswarm_baseline", "testswarm_login", "testswarm_plan_with_ai"]) assert.ok(tools.some(item => item.name === name), name);
+    for (const name of ["testswarm_doctor", "testswarm_run", "testswarm_status", "testswarm_baseline", "testswarm_login", "testswarm_plan_with_ai", "testswarm_plan_with_agent"]) assert.ok(tools.some(item => item.name === name), name);
     assert.equal(tools.find(item => item.name === "testswarm_status")?.annotations?.readOnlyHint, true);
     const plan = await client.callTool({ name: "testswarm_plan", arguments: {} });
     assert.equal(plan.isError, undefined);

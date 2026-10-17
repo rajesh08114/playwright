@@ -81,7 +81,15 @@ export const LlmConfig = z.object({
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
   maxJourneysPerRoute: z.number().int().positive().max(10).default(3),
   maxRoutes: z.number().int().positive().max(50).default(10),
-  maxSnapshotChars: z.number().int().positive().max(200_000).default(20_000)
+  maxSnapshotChars: z.number().int().positive().max(200_000).default(20_000),
+  /** Limits for the deep-agent explorer (plan-agent). */
+  agent: z.object({
+    /** Journey executions the agent may make across the whole run. */
+    maxTrials: z.number().int().positive().max(500).default(40),
+    /** LangGraph recursion limit for the coordinator (each model or tool step counts). */
+    recursionLimit: z.number().int().positive().max(2000).default(250),
+    timeoutMinutes: z.number().positive().max(240).default(20)
+  }).strict().default({})
 }).strict();
 export type LlmConfig = z.infer<typeof LlmConfig>;
 

@@ -30,6 +30,8 @@ export interface EngineOptions {
   store?: Store;
   /** Injected model-backed journey proposer (tests). By default built from the llm config. */
   journeyProposer?: JourneyProposer;
+  /** Injected LangChain chat model for the deep-agent explorer (tests). By default Claude via @langchain/anthropic. */
+  agentModel?: unknown;
 }
 
 /** A run marked running whose process has not written for this long is treated as abandoned. */
@@ -150,6 +152,41 @@ export class Engine {
     const file = join(directory, `proposed-journeys-${plan.id}.json`);
     await writeFile(file, JSON.stringify({ planId: plan.id, provider: proposer.name, usage, journeys, rejected, warnings }, null, 2));
     return { plan, proposedJourneys: journeys.length, blockedUntilReviewed: journeys.filter(item => item.destructive !== "none").map(item => item.id), rejected, warnings, usage, file };
+  }
+
+  /**
+   * Deep-agent exploratory planning: a LangGraph Deep Agent explores each route with a subagent, runs candidate
+   * journeys in the browser, fixes failures, and submits them. Only journeys that passed join the plan; the rest,
+   * plus candidate defects, go to a review file. See docs/architecture/deep-agent.md.
+   */
+  async planWithAgent() {
+    const config = await this.config();
+    if (!config.llm?.enabled) throw new UsageError('Agent planning is off. Add "llm": { "enabled": true } to the configuration; page snapshots will be sent to the model provider.');
+    let explorer: typeof import("../agents/deep/explorer.js");
+    try { explorer = await import("../agents/deep/explorer.js"); }
+    catch (error) { throw new UsageError(`Agent planning needs the optional LangChain packages: npm install deepagents @langchain/anthropic @langchain/core @langchain/langgraph (${(error as Error).message.split("\n")[0]})`); }
+    const discovery = await this.discover();
+    const routes = discovery.routes.slice(0, config.llm.maxRoutes);
+    if (!routes.length) throw new UsageError("Discovery found no routes to explore");
+    const model = (this.options.agentModel ?? await explorer.createAnthropicChatModel({ model: config.llm.model, effort: config.llm.effort })) as Parameters<typeof explorer.runExplorer>[0]["model"];
+    const result = await explorer.runExplorer({
+      model, target: config.target, policy: config.policy, routes,
+      limits: { ...config.llm.agent, maxJourneysPerRoute: config.llm.maxJourneysPerRoute, maxSnapshotChars: config.llm.maxSnapshotChars }
+    });
+    const verified = result.submissions.filter(item => item.verified).map(item => item.journey);
+    const plan = createPlanFromDiscovery(discovery, { maxCases: config.budgets.maxCases, journeys: [...journeysToCases(config.journeys), ...journeysToCases(verified, "generated")] });
+    await (await this.store()).putPlan(plan);
+    const directory = join(config.artifactsDir, "ai");
+    await mkdir(directory, { recursive: true });
+    const file = join(directory, `agent-exploration-${plan.id}.json`);
+    await writeFile(file, JSON.stringify({ planId: plan.id, model: config.llm.model, ...result }, null, 2));
+    return {
+      plan, file,
+      verifiedJourneys: verified.length,
+      forReview: result.submissions.filter(item => !item.verified).map(item => ({ id: item.journey.id, executed: item.executed, destructive: item.journey.destructive })),
+      findings: result.findings.length,
+      trials: result.trials, usage: result.usage, stoppedEarly: result.stoppedEarly
+    };
   }
 
   async getPlan(planId: string) {

@@ -41,6 +41,7 @@ tool("testswarm_plan", "Create a plan from target.startPath and target.routes wi
 tool("testswarm_plan_from_discovery", "Crawl the target and create a reviewable plan from the observed routes", {}, BROWSER, () => engine.planFromDiscovery());
 tool("testswarm_login", "Run the configured scripted login and save the browser session for later runs", {}, BROWSER, () => engine.login());
 tool("testswarm_plan_with_ai", "Crawl the target, send redacted accessibility snapshots to the configured model (Anthropic), and create a plan that adds validated model-proposed user journeys. Requires llm.enabled. Journeys that type or submit stay blocked until a human reviews them", {}, { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, () => engine.planWithAi());
+tool("testswarm_plan_with_agent", "Let a LangGraph deep agent explore the target route by route, run candidate journeys in the browser, fix failures, and add only verified journeys to a new plan. Requires llm.enabled; sends page snapshots to Anthropic and can take several minutes. Also reports candidate defects", {}, { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, () => engine.planWithAgent());
 tool("testswarm_run", "Execute a stored plan. Returns the run immediately; poll testswarm_status for progress", { planId, wait }, BROWSER, async ({ planId, wait }) => {
   const { run, done } = await engine.start(planId);
   if (wait) return done;

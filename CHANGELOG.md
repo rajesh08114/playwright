@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- **Deep-agent exploration** (`plan-agent`, `testswarm_plan_with_agent`): a LangGraph Deep Agent plans coverage with `write_todos`, delegates each route to an isolated `route-explorer` subagent, runs candidate journeys in the real browser, self-corrects from the failing step and a fresh snapshot, and adds only journeys that passed. Read-only execution by default; trial, recursion, and time budgets; candidate defects and token usage recorded for review. LangChain packages are optional dependencies loaded only by this command.
+- `npm run audit` (CI): fails on high/critical advisories except a documented, test-enforced allowlist (currently the unpatched `braces` advisory, unreachable from TestSwarm).
 - **User journeys**: multi-step flows defined as structured actions (click, fill, select, press, expect text/URL/title, ...) with accessible locators. Failures name the step. Secrets come from environment variables, are never stored or traced, and a missing secret blocks the case.
 - **Scripted login** (`auth`): signs in before discovery and runs, saves an owner-only session file, reuses it for `maxAgeMinutes`; `testswarm login` and a doctor check for the required variables. A failed login fails the run immediately.
 - **Model-assisted planning** (`plan-ai`, `testswarm_plan_with_ai`): sends redacted accessibility snapshots to Claude and adds validated journey proposals to the plan. Off by default; proposals that change state stay blocked until reviewed; proposals are saved for review with token usage.
