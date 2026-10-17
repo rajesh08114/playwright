@@ -43,7 +43,7 @@ export async function loadConfig(path?: string, root?: string): Promise<ProjectC
   const abs = (value: string) => isAbsolute(value) ? value : resolve(location.root, value);
   config.artifactsDir = abs(config.artifactsDir);
   config.target.allowedOrigins = origins;
-  config.target.visualBaselinesDir = abs(config.target.visualBaselinesDir ?? `${config.artifactsDir}/visual-baselines`);
+  config.target.visualBaselinesDir = config.target.visualBaselinesDir ? abs(config.target.visualBaselinesDir) : resolve(config.artifactsDir, "visual-baselines");
   if (config.target.storageStatePath) config.target.storageStatePath = abs(config.target.storageStatePath);
   config.target.executablePath ??= process.env.TESTSWARM_BROWSER_PATH || undefined;
   if (config.target.executablePath) config.target.executablePath = abs(config.target.executablePath);
