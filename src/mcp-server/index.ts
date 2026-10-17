@@ -9,7 +9,7 @@ import { VERSION } from "../core/version.js";
 // The project directory is TESTSWARM_PROJECT_DIR when set, otherwise the directory the host launched the server in.
 const engine = new Engine();
 const server = new McpServer({ name: "testswarm", version: VERSION }, {
-  instructions: "TestSwarm runs deterministic browser checks (functional, accessibility, responsive, visual) against the target in the project's testswarm.config.json. Typical flow: testswarm_doctor -> testswarm_plan_from_discovery -> testswarm_run (returns a runId immediately) -> poll testswarm_status until status is not \"running\" -> testswarm_report / testswarm_verify. UI cases stay \"blocked\" until a human approves baselines with testswarm_baseline. Findings are observations to verify, not confirmed defects."
+  instructions: "TestSwarm runs deterministic browser checks (functional, accessibility, responsive, visual) against the target in the project's testswarm.config.json. Typical flow: testswarm_doctor -> testswarm_plan_from_discovery (or testswarm_plan_with_ai when the user has enabled model-assisted planning) -> testswarm_run (returns a runId immediately) -> poll testswarm_status until status is not \"running\" -> testswarm_report / testswarm_verify. UI cases stay \"blocked\" until a human approves baselines with testswarm_baseline. Findings are observations to verify, not confirmed defects."
 });
 
 type Annotations = { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
@@ -39,6 +39,8 @@ tool("testswarm_init", "Create a starter testswarm.config.json in the project if
 tool("testswarm_discover", "Crawl same-origin routes from the start path, target.routes, and sitemap.xml (no form submission)", {}, BROWSER, () => engine.discover());
 tool("testswarm_plan", "Create a plan from target.startPath and target.routes without crawling", {}, WRITE, () => engine.plan());
 tool("testswarm_plan_from_discovery", "Crawl the target and create a reviewable plan from the observed routes", {}, BROWSER, () => engine.planFromDiscovery());
+tool("testswarm_login", "Run the configured scripted login and save the browser session for later runs", {}, BROWSER, () => engine.login());
+tool("testswarm_plan_with_ai", "Crawl the target, send redacted accessibility snapshots to the configured model (Anthropic), and create a plan that adds validated model-proposed user journeys. Requires llm.enabled. Journeys that type or submit stay blocked until a human reviews them", {}, { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, () => engine.planWithAi());
 tool("testswarm_run", "Execute a stored plan. Returns the run immediately; poll testswarm_status for progress", { planId, wait }, BROWSER, async ({ planId, wait }) => {
   const { run, done } = await engine.start(planId);
   if (wait) return done;

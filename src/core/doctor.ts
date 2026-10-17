@@ -42,6 +42,16 @@ export async function runDoctor(location: ProjectLocation = locateProject(), opt
   try { await access(config.target.visualBaselinesDir!); checks.push({ name: "visual-baselines", status: "passed", detail: config.target.visualBaselinesDir! }); }
   catch { checks.push({ name: "visual-baselines", status: "warning", detail: `No baselines yet; UI cases will be "blocked" until you approve some with "testswarm baseline <run-id>"` }); }
 
+  if (config.auth) {
+    const missing = config.auth.steps.flatMap(step => step.type === "fill" && step.valueFromEnv && !process.env[step.valueFromEnv] ? [step.valueFromEnv] : []);
+    checks.push(missing.length ? { name: "auth-secrets", status: "failed", detail: `Login needs environment variable(s): ${missing.join(", ")}` } : { name: "auth-secrets", status: "passed", detail: `Login secrets present; session saved to ${config.auth.storageStatePath}` });
+  }
+  const journeySecrets = [...new Set(config.journeys.flatMap(journey => journey.steps.flatMap(step => step.type === "fill" && step.valueFromEnv && !process.env[step.valueFromEnv] ? [step.valueFromEnv] : [])))];
+  if (journeySecrets.length) checks.push({ name: "journey-secrets", status: "warning", detail: `Journeys using ${journeySecrets.join(", ")} will be blocked until set` });
+  if (config.llm?.enabled) {
+    const credential = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"].find(name => process.env[name]);
+    checks.push({ name: "llm", status: credential ? "passed" : "warning", detail: credential ? `${config.llm.model} via ${credential}; page snapshots are sent to Anthropic by "plan-ai"` : `No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN set; "plan-ai" will only work if an \`ant auth login\` profile exists` });
+  }
   if (config.policy.allowExternalNetwork) checks.push({ name: "policy", status: "warning", detail: "policy.allowExternalNetwork is on: third-party subresources will load during tests" });
   if (config.policy.allowDestructiveActions) checks.push({ name: "policy", status: "warning", detail: "policy.allowDestructiveActions is on: cases marked destructive will execute" });
   return { schemaVersion: 1, ok: checks.every(check => check.status !== "failed"), checks };

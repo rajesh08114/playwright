@@ -10,6 +10,7 @@ What each route is checked for:
 | accessibility | axe-core scan | Any violation at or above `policy.accessibilityFailOn` (default `serious`) |
 | responsive | Document width per viewport | Horizontal overflow |
 | ui | Full-page screenshot vs. approved baseline | Changed pixels exceed `policy.visualMaxDiffRatio`; **blocked** (not passed) until a baseline is approved |
+| journey | Multi-step user flow you define (or a model proposes) | Any step fails; the error names the step number and what was observed |
 
 TestSwarm does not replace application-specific test design, security testing, or human release approval. It never submits forms, never follows links that look state-changing (logout, delete, ...), and never navigates outside `target.allowedOrigins`.
 
@@ -39,6 +40,66 @@ On the first run every UI case is `blocked` because no visual baselines exist. O
 
 Once published to npm, the same commands are available as `npx testswarm ...`.
 
+## User journeys
+
+Route checks only load and inspect pages. To test what users *do*, add journeys to the config. Each step is a structured action (no scripts), and elements are located the way users perceive them:
+
+```json
+"journeys": [
+  {
+    "id": "search",
+    "title": "Search finds mugs",
+    "startPath": "/search",
+    "steps": [
+      { "type": "fill", "target": { "label": "Search products" }, "value": "mug" },
+      { "type": "click", "target": { "role": "button", "name": "Search" } },
+      { "type": "expectUrl", "path": "q=mug" },
+      { "type": "expectText", "target": { "role": "heading", "name": "Results for mug" }, "text": "mug" }
+    ]
+  }
+]
+```
+
+- Actions: `goto`, `click`, `fill`, `select`, `check`, `press`, `waitFor`, `expectVisible`, `expectHidden`, `expectText`, `expectUrl`, `expectTitle`.
+- Targets: exactly one of `role` (+ optional `name`), `label`, `text`, `placeholder`, `testId`, or `css`.
+- Secrets: `"valueFromEnv": "MY_PASSWORD"` instead of `"value"`. The value is read from the environment at run time, never stored, never shown in reports, and a case that uses one is never traced. If the variable is unset, the case is `blocked`.
+- Journeys that change data should declare `"destructive": "reversible"` or `"destructive"`; they only run when `policy.allowDestructiveActions` is on.
+- Journeys appear in plans as `TS-JRNY-<id>` cases (ahead of route checks) and export as real Playwright steps.
+
+## Scripted login
+
+For apps behind a sign-in, describe the login once; TestSwarm signs in before discovery and runs, saves the session (owner-only file), and reuses it until `maxAgeMinutes` passes:
+
+```json
+"auth": {
+  "loginPath": "/login",
+  "successPath": "/account",
+  "maxAgeMinutes": 60,
+  "steps": [
+    { "type": "fill", "target": { "label": "Email" }, "valueFromEnv": "APP_TEST_EMAIL" },
+    { "type": "fill", "target": { "label": "Password" }, "valueFromEnv": "APP_TEST_PASSWORD" },
+    { "type": "click", "target": { "role": "button", "name": "Sign in" } }
+  ]
+}
+```
+
+`testswarm login` signs in on demand; `doctor` checks the variables are set. If login fails, the run fails immediately with the failing step instead of testing every page logged out. Use a dedicated test account.
+
+## Model-assisted planning (optional)
+
+`testswarm plan-ai` crawls the app, sends an **accessibility-tree snapshot** of up to `llm.maxRoutes` pages to Claude, and asks for realistic user journeys. It is off by default; enable it explicitly:
+
+```json
+"llm": { "enabled": true, "model": "claude-opus-5-5", "effort": "medium", "maxRoutes": 10, "maxJourneysPerRoute": 3 }
+```
+
+Credentials come from `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login` profile. Safeguards:
+
+- Snapshots are redacted with the evidence redactor and truncated (`llm.maxSnapshotChars`) before they leave the machine; page text is treated as untrusted data in the prompt.
+- The model can only fill a fixed JSON schema of the actions above. Every proposal is re-validated; anything referencing a page that wasn't shown, containing an invalid step, or lacking an assertion is rejected, not repaired.
+- A proposed journey that types, selects, presses keys, or clicks anything but a link is marked `reversible`, so it stays **blocked** until you review it (proposals are written to `.testswarm/ai/proposed-journeys-<plan-id>.json`) and copy it into `journeys` or enable `policy.allowDestructiveActions`.
+- The request uses structured outputs, a cached system prompt, and server-side refusal fallbacks; the command prints token usage.
+
 ## CLI
 
 ```text
@@ -52,12 +113,15 @@ testswarm <command> [arguments] [--project <dir>] [--config <file>] [--json]
 | `doctor` | Check Node, configuration, storage, browser launch, target reachability |
 | `discover` | Crawl and list routes |
 | `plan` | Plan from `target.startPath` + `target.routes` (no crawl) |
-| `plan-discovered` | Crawl, then plan |
+| `plan-discovered` | Crawl, then plan (includes configured journeys) |
+| `plan-ai` | Crawl, then add model-proposed journeys (requires `llm.enabled`) |
+| `login` | Run the configured login and save the session |
 | `run <plan-id>` | Execute a plan |
 | `retest <run-id>` | Re-run only what did not pass, as a new run |
-| `resume <run-id> [--force]` | Continue an interrupted, failed, or cancelled run in place |
+| `resume <run-id> [--force]` | Continue an interrupted, failed, cancelled, or stale run in place |
 | `repeat <plan-id> [count]` | Run 2-10 times and list unstable cases |
 | `cancel <run-id>` | Cancel a run, including one executing in another process |
+| `status <run-id>` | Progress; flags runs whose process stopped (no heartbeat for 2 minutes) as `stale` |
 | `runs`, `status`, `results`, `evidence` | Inspect runs |
 | `report <run-id>` | Write HTML, JSON, and JUnit reports |
 | `verify <run-id>` | Group failures into findings (`probable` when a case fails on every viewport) |
@@ -111,6 +175,9 @@ Commit approved baselines (`target.visualBaselinesDir`) if you want CI to check 
 | `policy.allowDestructiveActions` | `false` | Allow cases marked `reversible` / `destructive` |
 | `policy.redactSecrets` | `true` | Redact tokens, cookies, and keys from console and network evidence |
 | `testData` | none | HTTP setup/cleanup endpoints called around each run (must be allowed origins) |
+| `journeys` | `[]` | User journeys (see above) |
+| `auth` | none | Scripted login (see above); overrides `target.storageStatePath` |
+| `llm` | off | Model-assisted planning (see above) |
 
 ## MCP server and Claude Code plugin
 

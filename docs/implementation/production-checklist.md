@@ -17,6 +17,10 @@
 - [x] MCP protocol: tool listing, annotations, calls, structured errors
 - [x] Report escaping (HTML/XML), finding grouping, redaction patterns
 - [x] Plugin manifest, marketplace, and MCP config consistent with package version
+- [x] Journeys: pass, step-numbered failure with trace, blocked on missing secret, exported as Playwright code
+- [x] Scripted login: session saved owner-only and reused by journeys; wrong password fails with the failing step
+- [x] Model-assisted planning: snapshot capture, proposal validation and rejection, state-changing proposals blocked, refusal/truncation/auth errors surfaced (request shape verified against the SDK with a stubbed transport)
+- [x] Stale running runs detected and resumable without `--force`
 
 ## Owner decisions before first public release
 
@@ -26,8 +30,8 @@
 
 ## Not yet implemented
 
-- [ ] Model-assisted planning: `src/llm/provider.ts` defines the interface; only the disabled provider exists, and plans are deterministic
-- [ ] Interactive journeys (clicking, typing, multi-step flows): cases navigate and inspect; they do not drive UI interactions
-- [ ] Scripted login: authentication uses a pre-recorded Playwright storage-state file
+- [ ] A live `plan-ai` call against the Anthropic API (verified only with a stubbed transport; needs an API key)
+- [ ] Quality evaluation of model-proposed journeys on real applications
+- [ ] Login flows that need MFA or CAPTCHA (use a pre-recorded `target.storageStatePath` for those)
 - [ ] Interactive validation inside Claude Code, Cursor, and Antigravity hosts
 - [ ] External penetration testing and deployment-specific permission review

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+- **User journeys**: multi-step flows defined as structured actions (click, fill, select, press, expect text/URL/title, ...) with accessible locators. Failures name the step. Secrets come from environment variables, are never stored or traced, and a missing secret blocks the case.
+- **Scripted login** (`auth`): signs in before discovery and runs, saves an owner-only session file, reuses it for `maxAgeMinutes`; `testswarm login` and a doctor check for the required variables. A failed login fails the run immediately.
+- **Model-assisted planning** (`plan-ai`, `testswarm_plan_with_ai`): sends redacted accessibility snapshots to Claude and adds validated journey proposals to the plan. Off by default; proposals that change state stay blocked until reviewed; proposals are saved for review with token usage.
+- **Stale-run detection**: runs heartbeat every 15 s; `status` flags a running run with no activity for 2 minutes as stale, and `resume` accepts it without `--force`.
+- Demo app: working sign-in, protected account page, search, and a client-side cart.
+
+### Changed
+- `src/llm/provider.ts` now defines a journey-proposal interface; the previous unused generic completion interface was removed.
+
+## 0.1.0 (merged in #1)
+
 ### Fixed (results that were wrong before)
 - Accessibility cases now fail on axe violations at or above `policy.accessibilityFailOn`; previously violations were recorded but every case passed.
 - UI cases are `blocked` when no baseline exists; previously they passed when `visualBaselinesDir` was unset.

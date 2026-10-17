@@ -16,13 +16,13 @@ test("clean demo: discovery, planning, blocked baselines, approval, then a green
   const engine = new Engine({ projectDir: await tempProject({ target: targetFor(baseUrl, { viewportProfiles: profiles }), budgets: { maxConcurrency: 2, maxRetries: 0 }, policy }) });
   try {
     const plan = await engine.planFromDiscovery();
-    assert.deepEqual([...new Set(plan.cases.map(item => item.id.replace(/^TS-\w+-/, "")))].sort(), ["products", "root"]);
+    assert.deepEqual([...new Set(plan.cases.map(item => item.id.replace(/^TS-\w+-/, "")))].sort(), ["login", "products", "root", "search"]);
     const first = await engine.run(plan.id);
     const byOutcome = (outcome: string) => first.executions.filter(item => item.outcome === outcome).map(item => item.testCaseId);
     assert.deepEqual(byOutcome("failed"), [], JSON.stringify(first.executions.filter(item => item.outcome === "failed")));
-    assert.equal(byOutcome("blocked").length, 4, "UI cases without baselines are blocked, never passed");
+    assert.equal(byOutcome("blocked").length, 8, "UI cases without baselines are blocked, never passed");
     assert.equal(first.status, "failed");
-    assert.equal((await engine.baseline(first.id)).files.length, 4);
+    assert.equal((await engine.baseline(first.id)).files.length, 8);
     const second = await engine.run(plan.id);
     assert.equal(second.status, "completed", JSON.stringify(second.executions.filter(item => item.outcome !== "passed")));
     const { files } = await engine.report(second.id);

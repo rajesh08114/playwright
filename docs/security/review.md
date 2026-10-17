@@ -7,12 +7,13 @@
 - **No arbitrary execution.** Neither the CLI nor the MCP server runs shell commands or user-supplied scripts. The MCP surface has no file-read or file-delete tools; `prune` is CLI-only.
 - **Human-in-the-loop for baselines.** Approving visual baselines is a separate, explicit action, marked destructive in MCP tool annotations; the plugin skill instructs the agent never to self-approve.
 - **Evidence handling.** Console and network evidence is redacted (bearer tokens, cookies, key/secret/password fields, URL query secrets, JWTs, common API-key formats) and written `0600`. The database is `0600` in a `0700` directory where the filesystem supports it.
-- **Model calls.** None. The LLM provider interface ships only with a disabled implementation.
+- **Model calls.** Only `plan-ai`, only when `llm.enabled` is true. It sends redacted, truncated accessibility snapshots (not HTML, cookies, or storage) to Anthropic. Page text is framed as untrusted data; the model can only return a fixed schema of declarative actions, each re-validated; proposals that change state are blocked until a human reviews them.
+- **Secrets in journeys and login.** Supplied only through environment variables (`valueFromEnv`), never written to plans, reports, or step descriptions; cases and logins that type secrets are not traced. Saved sessions are written `0600`.
 - **Dependencies.** MCP SDK pinned; `npm audit --omit=dev` runs in CI.
 
 ## Residual risks
 
 - Screenshots, traces, and axe results are not redacted; they contain whatever the page displays. Use `policy.maskSelectors` for sensitive regions and treat `.testswarm/` as sensitive.
-- Storage-state files are credentials. Keep them out of version control and outside shared artifact uploads.
+- Storage-state files (including the one `auth` saves) are credentials. Keep them out of version control and outside shared artifact uploads.
 - Redaction is pattern-based and cannot catch every secret format.
 - Host-specific adapter invocation and remote MCP transports have not been independently reviewed; deployments should do their own permission review and penetration testing.

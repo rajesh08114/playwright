@@ -49,6 +49,12 @@ export async function loadConfig(path?: string, root?: string): Promise<ProjectC
   if (config.target.executablePath) config.target.executablePath = abs(config.target.executablePath);
   if (config.testData?.fixturePath) config.testData.fixturePath = abs(config.testData.fixturePath);
   if (config.benchmarkOraclePath) config.benchmarkOraclePath = abs(config.benchmarkOraclePath);
+  if (config.auth) config.auth.storageStatePath = config.auth.storageStatePath ? abs(config.auth.storageStatePath) : resolve(config.artifactsDir, "auth", "storage-state.json");
+  const journeyIds = new Set<string>();
+  for (const journey of config.journeys) {
+    if (journeyIds.has(journey.id)) throw new ConfigError(`Duplicate journey id "${journey.id}"`);
+    journeyIds.add(journey.id);
+  }
   return config;
 }
 

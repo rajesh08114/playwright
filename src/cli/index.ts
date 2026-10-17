@@ -19,6 +19,8 @@ Planning
   discover                         Crawl the target and list routes
   plan                             Plan from target.startPath and target.routes (no crawl)
   plan-discovered                  Crawl, then plan from discovered routes
+  plan-ai                          Crawl, then add model-proposed journeys (needs llm.enabled)
+  login                            Run the configured login and save the session
 
 Execution
   run <plan-id>                    Execute a plan (exit code 1 unless every case passes)
@@ -93,6 +95,19 @@ async function main(): Promise<number> {
     case "inspect": out(await engine.inspect()); return 0;
     case "doctor": { const result = await engine.doctor(); out(result, () => result.checks.map(check => `${check.status === "passed" ? "ok  " : check.status === "warning" ? "warn" : "FAIL"} ${check.name.padEnd(18)} ${check.detail}`).join("\n")); return result.ok ? 0 : 1; }
     case "discover": { const result = await engine.discover(); out(result, () => [`Discovered ${result.routes.length} route(s):`, ...result.routes.map(route => `  ${route.path}  ${route.heading ?? route.title ?? ""}`), ...result.warnings.map(item => `  warning: ${item}`)].join("\n")); return 0; }
+    case "login": { const result = await engine.login(); out(result, () => `Logged in; session saved to ${result.storageStatePath} (reused for ${result.maxAgeMinutes} minutes).`); return 0; }
+    case "plan-ai": {
+      const result = await engine.planWithAi();
+      out(result, () => [
+        `Plan ${result.plan.id} with ${result.plan.cases.length} case(s), including ${result.proposedJourneys} model-proposed journey(s).`,
+        result.blockedUntilReviewed.length ? `${result.blockedUntilReviewed.length} proposed journey(s) change page state and stay blocked until you review them and set policy.allowDestructiveActions: ${result.blockedUntilReviewed.join(", ")}` : "",
+        result.rejected.length ? `${result.rejected.length} proposal(s) rejected as invalid.` : "",
+        `Review: ${result.file}`,
+        result.usage ? `Tokens: ${result.usage.inputTokens} in (${result.usage.cacheReadInputTokens} cached), ${result.usage.outputTokens} out on ${result.usage.model}.` : "",
+        `Run it with: testswarm run ${result.plan.id}`
+      ].filter(Boolean).join("\n"));
+      return 0;
+    }
     case "plan": case "plan-discovered": { const plan = command === "plan" ? await engine.plan() : await engine.planFromDiscovery(); out(plan, () => `Plan ${plan.id} with ${plan.cases.length} case(s). Run it with: testswarm run ${plan.id}`); return 0; }
     case "run": { const run = await engine.run(need(args[0], "run <plan-id>")); out(run, () => `${runSummary(run)}\nReport: testswarm report ${run.id}`); return runExitCode(run); }
     case "retest": { const run = await engine.retest(need(args[0], "retest <run-id>")); out(run, () => runSummary(run)); return runExitCode(run); }
@@ -102,7 +117,7 @@ async function main(): Promise<number> {
     case "agents": out(await engine.agents(need(args[0], "agents <plan-id>"))); return 0;
     case "agent-run": { const result = await engine.agentRun(need(args[0], "agent-run <plan-id>")); out(result, () => runSummary(result.run)); return runExitCode(result.run); }
     case "runs": { const runs = await engine.runs(int(values.limit, "--limit", 20)); out(runs, () => runs.length ? runs.map(run => `${run.id}  ${run.status.padEnd(9)}  ${run.startedAt}  ${run.summary.passed}/${run.summary.total} passed`).join("\n") : "No runs yet."); return 0; }
-    case "status": { const progress = await engine.progress(need(args[0], "status <run-id>")); out(progress, () => `Run ${progress.runId}: ${progress.status} (${progress.completedExecutions}/${progress.expectedExecutions ?? "?"} executions)\n  ${progress.summary.passed} passed, ${progress.summary.failed} failed, ${progress.summary.flaky} flaky, ${progress.summary.blocked} blocked, ${progress.summary.infrastructure} infrastructure${progress.error ? `\n  Error: ${progress.error}` : ""}`); return 0; }
+    case "status": { const progress = await engine.progress(need(args[0], "status <run-id>")); out(progress, () => `Run ${progress.runId}: ${progress.status} (${progress.completedExecutions}/${progress.expectedExecutions ?? "?"} executions)\n  ${progress.summary.passed} passed, ${progress.summary.failed} failed, ${progress.summary.flaky} flaky, ${progress.summary.blocked} blocked, ${progress.summary.infrastructure} infrastructure${progress.error ? `\n  Error: ${progress.error}` : ""}${progress.hint ? `\n  ${progress.hint}` : ""}`); return 0; }
     case "results": { const run = await engine.results(need(args[0], "results <run-id>")); out(run, () => runSummary(run)); return 0; }
     case "evidence": { const items = await engine.evidence(need(args[0], "evidence <run-id>")); out(items, () => items.map(item => `${item.kind.padEnd(13)} ${item.testCaseId} [${item.viewportProfile ?? "default"}] ${item.path}`).join("\n")); return 0; }
     case "report": { const result = await engine.report(need(args[0], "report <run-id>")); out(result, () => `HTML:  ${result.files.html}\nJSON:  ${result.files.json}\nJUnit: ${result.files.junit}`); return 0; }
@@ -117,7 +132,8 @@ async function main(): Promise<number> {
 }
 
 main().then(code => { process.exitCode = code; }, error => {
-  const expected = error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError;
+  // Login and model-provider failures are environment/configuration problems the user can fix, not internal bugs.
+  const expected = error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError || error?.name === "LoginError" || error?.name === "LlmError";
   console.error(json ? JSON.stringify({ error: { name: error?.name, message: error?.message ?? String(error) } }) : `Error: ${error?.message ?? error}`);
   if (!expected && process.env.TESTSWARM_DEBUG) console.error(error?.stack);
   process.exitCode = expected ? 2 : 3;

@@ -7,6 +7,7 @@ import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 import { ApplicationTarget, EvidenceArtifact, Impact, Policy, TestCase, TestExecution } from "../core/contracts.js";
 import { redactSensitive } from "../evidence/redact.js";
+import { MissingSecretError, runActions, usesSecrets } from "./actions.js";
 
 export interface ExecutionHooks { afterLaunch?: (browser: Browser) => Promise<void>; }
 export interface ExecutionOptions {
@@ -91,7 +92,8 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
     if (!browser) { browser = ownBrowser = await launchBrowser(target); }
     if (options.hooks?.afterLaunch) await options.hooks.afterLaunch(browser);
     context = await browser.newContext({ baseURL: target.baseUrl, viewport: target.viewport, storageState: target.storageStatePath, reducedMotion: "reduce" });
-    if (policy.trace !== "off") { await context.tracing.start({ screenshots: true, snapshots: true }); tracing = true; }
+    // Traces record typed text, so a case that fills secrets from the environment is never traced.
+    if (policy.trace !== "off" && !usesSecrets(testCase.actions)) { await context.tracing.start({ screenshots: true, snapshots: true }); tracing = true; }
     await context.route("**/*", async route => {
       const request = route.request(), requestUrl = new URL(request.url());
       const isAllowedOrigin = allowed.has(requestUrl.origin) || ["data:", "blob:"].includes(requestUrl.protocol);
@@ -133,6 +135,15 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
       case "responsive": {
         const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
         if (widths.document > widths.viewport) failures.push(`Horizontal overflow: document is ${widths.document}px wide in a ${widths.viewport}px viewport`);
+        break;
+      }
+      case "journey": {
+        try { await runActions(page, testCase.actions ?? [], { baseUrl: target.baseUrl, allowedOrigins: allowed, timeoutMs: target.actionTimeoutMs }); }
+        catch (error) {
+          if (error instanceof MissingSecretError) throw new BlockedError(error.message);
+          failures.push(redact(error instanceof Error ? error.message : String(error)));
+        }
+        if (policy.failOnConsoleErrors && consoleErrors.length) failures.push(`${consoleErrors.length} console error(s): ${redact(consoleErrors[0]).slice(0, 200)}`);
         break;
       }
       case "ui":
