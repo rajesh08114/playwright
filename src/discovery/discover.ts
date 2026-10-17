@@ -6,8 +6,11 @@ import { launchBrowser } from "../browser-runtime/runner.js";
 const UNSAFE_PATH = /\/(?:log-?out|sign-?out|delete|remove|destroy|unsubscribe)(?:\/|$|\?)/i;
 const ASSET_PATH = /\.(?:png|jpe?g|gif|svg|webp|ico|pdf|zip|gz|css|js|mjs|map|json|xml|txt|woff2?|ttf|mp4|webm|mp3)$/i;
 
-/** Route key: path plus query, without fragment. */
-function routeKey(url: URL) { return `${url.pathname}${url.search}`; }
+/**
+ * Route key: path plus query. Fragments are dropped (in-page anchors) except hash-router routes ("#/about",
+ * "#!/about"), which are separate pages in single-page apps.
+ */
+export function routeKey(url: URL) { return `${url.pathname}${url.search}${/^#!?\//.test(url.hash) ? url.hash : ""}`; }
 
 async function sitemapPaths(target: ApplicationTarget, origin: string, signal: AbortSignal): Promise<string[]> {
   try {

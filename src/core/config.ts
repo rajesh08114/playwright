@@ -62,7 +62,9 @@ export async function loadConfig(path?: string, root?: string): Promise<ProjectC
 export class ConfigError extends Error { override name = "ConfigError"; }
 
 export function starterConfig(baseUrl = "http://127.0.0.1:3000") {
-  const origin = new URL(baseUrl).origin;
+  const url = new URL(baseUrl), origin = url.origin;
+  // An app served under a sub-path (http://host/app/) starts there; the origin alone would test the wrong pages.
+  const startPath = url.pathname || "/";
   return {
     schemaVersion: 1,
     name: "local-app",
@@ -70,7 +72,7 @@ export function starterConfig(baseUrl = "http://127.0.0.1:3000") {
     target: {
       baseUrl: origin,
       allowedOrigins: [origin],
-      startPath: "/",
+      startPath,
       routes: [],
       browser: "chromium",
       actionTimeoutMs: 10000,

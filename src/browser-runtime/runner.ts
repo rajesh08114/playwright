@@ -21,6 +21,10 @@ export interface ExecutionOptions {
 const DEFAULT_POLICY = Policy.parse({});
 const IMPACT_RANK: Record<Impact, number> = { minor: 0, moderate: 1, serious: 2, critical: 3 };
 const INFRASTRUCTURE_ERROR = /could not start|executable doesn't exist|browser has been closed|target page, context or browser has been closed|browser disconnected|failed to launch|browserType\.launch/i;
+// The application under test is not reachable at all: an environment problem, not a product defect.
+const UNREACHABLE_TARGET = /ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_CONNECTION_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED|ECONNREFUSED|ENOTFOUND|NS_ERROR_CONNECTION_REFUSED|Could not connect to server/i;
+/** Playwright errors append a multi-line call log; reports and agents only need the first line. */
+export const firstLine = (message: string) => message.split("\n")[0].trim();
 
 /** A deliberate test verdict that is not a failure of the product (missing baseline, policy refusal). */
 class BlockedError extends Error {}
@@ -152,8 +156,9 @@ export async function executeCase(target: ApplicationTarget, testCase: TestCase,
     if (testCase.category === "ui") await compareWithBaseline(screenshot);
     return failures.length ? finish("failed", failures.join("; ")) : finish("passed");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = firstLine(error instanceof Error ? error.message : String(error));
     if (error instanceof BlockedError) return finish("blocked", message);
+    if (UNREACHABLE_TARGET.test(message)) return finish("infrastructure_failure", `Target not reachable: ${message}`);
     return finish(INFRASTRUCTURE_ERROR.test(message) ? "infrastructure_failure" : "failed", [...failures, message].join("; "));
   }
 

@@ -63,7 +63,10 @@ export function cachedChromiumBuilds(): string[] {
 
 export function launchCandidates(target: ApplicationTarget): BrowserCandidate[] {
   const headed = process.env.TESTSWARM_HEADED === "1" || target.headless === false;
-  const base: LaunchOptions = { headless: !headed, ...(target.slowMoMs ? { slowMo: target.slowMoMs } : {}) };
+  // TestSwarm's CLI and MCP server handle Ctrl-C/SIGTERM themselves (cancel the run, then close browsers). Playwright's
+  // default handlers would exit the process first and leave the run recorded as "running"; browsers are still killed
+  // when the process exits.
+  const base: LaunchOptions = { headless: !headed, handleSIGINT: false, handleSIGTERM: false, ...(target.slowMoMs ? { slowMo: target.slowMoMs } : {}) };
   const explicit = target.executablePath ?? (process.env.TESTSWARM_BROWSER_PATH || undefined);
   if (explicit) return [{ label: `configured executable ${explicit}`, options: { ...base, executablePath: explicit } }];
   const candidates: BrowserCandidate[] = [{ label: `Playwright-managed ${target.browser}`, options: base }];
@@ -103,11 +106,14 @@ export async function launchBrowser(target: ApplicationTarget): Promise<Browser>
 /** Which candidate launched for this target in this process, if any. */
 export function resolvedBrowser(target: ApplicationTarget) { return resolved.get(cacheKey(target))?.label; }
 
-/** Runs Playwright's own installer for the browser this Playwright version expects. */
+/**
+ * Runs Playwright's own installer for the browser this Playwright version expects. Its progress goes to stderr:
+ * when called from the MCP server, stdout is the protocol channel and any stray output would corrupt it.
+ */
 export function installBrowser(browserName: string, options: { withDeps?: boolean } = {}): Promise<number> {
   const cli = join(dirname(createRequire(import.meta.url).resolve("playwright/package.json")), "cli.js");
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, "install", ...(options.withDeps ? ["--with-deps"] : []), browserName], { stdio: ["ignore", "inherit", "inherit"] });
+    const child = spawn(process.execPath, [cli, "install", ...(options.withDeps ? ["--with-deps"] : []), browserName], { stdio: ["ignore", 2, 2] });
     child.on("error", reject);
     child.on("exit", code => resolve(code ?? 1));
   });

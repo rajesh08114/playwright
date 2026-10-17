@@ -53,6 +53,7 @@ export function nextSteps(run: TestRun): string[] {
   const count = (outcome: TestExecution["outcome"]) => latest.filter(item => item.outcome === outcome).length;
   const missingBaselines = latest.filter(item => item.outcome === "blocked" && /Missing visual baseline/.test(item.error ?? "")).length;
   if (run.status === "running") return [`Still running: poll status for ${run.id}.`];
+  if (run.status === "cancelled") steps.push(`The run was cancelled after ${run.executions.length}${run.expectedExecutions ? ` of ${run.expectedExecutions}` : ""} execution(s); continue it with resume ${run.id}.`);
   if (run.error) steps.push(`The run stopped early: ${run.error}`);
   if (count("infrastructure_failure")) steps.push(`${count("infrastructure_failure")} execution(s) could not run because of the environment (browser or target). Run doctor.`);
   if (count("failed")) steps.push(`${count("failed")} execution(s) failed: review them with verify ${run.id} and the screenshots, fix, then retest ${run.id}.`);
@@ -136,6 +137,13 @@ export class Engine {
     return result;
   }
 
+  /** An empty crawl almost always means the target is down or misconfigured; never turn it into an empty, "passing" plan. */
+  private requireRoutes(discovery: Awaited<ReturnType<Engine["discover"]>>, config: ProjectConfiguration) {
+    if (discovery.routes.length) return discovery;
+    const reasons = discovery.warnings.slice(0, 3).map(item => item.split("\n")[0]).join("; ");
+    throw new UsageError(`Discovery found no pages at ${config.target.baseUrl}${config.target.startPath}${reasons ? ` (${reasons})` : ""}. Is the application running? Check target.baseUrl, or run "testswarm doctor".`);
+  }
+
   /** Plan from the configured start path and target.routes, without crawling. */
   async plan() {
     const config = await this.config();
@@ -147,7 +155,7 @@ export class Engine {
 
   async planFromDiscovery() {
     const config = await this.config();
-    const plan = createPlanFromDiscovery(await this.discover(), { maxCases: config.budgets.maxCases, journeys: journeysToCases(config.journeys) });
+    const plan = createPlanFromDiscovery(this.requireRoutes(await this.discover(), config), { maxCases: config.budgets.maxCases, journeys: journeysToCases(config.journeys) });
     await (await this.store()).putPlan(plan);
     return plan;
   }
@@ -162,9 +170,10 @@ export class Engine {
     const config = await this.config();
     if (!config.llm?.enabled) throw new UsageError('Model-assisted planning is off. Add "llm": { "enabled": true } to the configuration; page snapshots will be sent to the model provider.');
     const proposer = this.options.journeyProposer ?? new AnthropicJourneyProposer(config.llm);
-    const discovery = await this.discover();
+    const discovery = this.requireRoutes(await this.discover(), config);
+    // Snapshots must see the same signed-in pages the run will test.
+    await this.authenticate(config);
     const paths = discovery.routes.map(route => route.path).slice(0, config.llm.maxRoutes);
-    if (!paths.length) throw new UsageError("Discovery found no routes to snapshot");
     const { snapshots, warnings } = await snapshotRoutes(config.target, paths, config.llm.maxSnapshotChars);
     const { journeys: raw, usage } = await proposer.propose(snapshots, { maxJourneysPerRoute: config.llm.maxJourneysPerRoute });
     const { journeys, rejected } = validateProposals(raw, new Set(snapshots.map(item => item.path)));
@@ -188,9 +197,10 @@ export class Engine {
     let explorer: typeof import("../agents/deep/explorer.js");
     try { explorer = await import("../agents/deep/explorer.js"); }
     catch (error) { throw new UsageError(`Agent planning needs the optional LangChain packages: npm install deepagents @langchain/anthropic @langchain/core @langchain/langgraph (${(error as Error).message.split("\n")[0]})`); }
-    const discovery = await this.discover();
+    const discovery = this.requireRoutes(await this.discover(), config);
+    // The agent must explore the same signed-in pages the run will test.
+    await this.authenticate(config);
     const routes = discovery.routes.slice(0, config.llm.maxRoutes);
-    if (!routes.length) throw new UsageError("Discovery found no routes to explore");
     const model = (this.options.agentModel ?? await explorer.createAnthropicChatModel({ model: config.llm.model, effort: config.llm.effort })) as Parameters<typeof explorer.runExplorer>[0]["model"];
     const result = await explorer.runExplorer({
       model, target: config.target, policy: config.policy, routes,
@@ -222,6 +232,7 @@ export class Engine {
   async start(planId: string, options: { only?: Set<string>; retestOf?: string } = {}) {
     const config = await this.config(), plan = await this.getPlan(planId), store = await this.store();
     const items = this.workItems(config, plan).filter(item => !options.only || options.only.has(executionKey({ testCaseId: item.testCase.id, viewportProfile: item.profile.name })));
+    if (!items.length) throw new UsageError(`Plan ${planId} has no cases to run, so a run could not show anything. Create a plan from a reachable target first.`);
     const run: TestRun = { id: randomUUID(), projectName: config.name, planId, status: "running", startedAt: new Date().toISOString(), expectedExecutions: items.length, ...(options.retestOf ? { retestOf: options.retestOf } : {}), executions: [] };
     await store.putRun(run);
     const done = this.execute(run, items, config).finally(() => this.active.delete(run.id));

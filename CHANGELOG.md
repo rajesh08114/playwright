@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed (found by walking the whole workflow; each has a regression test that fails on the old code)
+- **False pass when the app is down**: discovery that finds no pages used to produce an empty plan whose run reported "Everything passed" (exit 0). Discovery now fails with "Is the application running?", and empty plans cannot be run.
+- **Unreachable app reported as product failures**: connection refused/reset/DNS errors are now `infrastructure_failure` ("Target not reachable"), and Playwright's multi-line call logs are trimmed from errors.
+- **Expired saved sessions**: a young session file whose server-side session was dropped (restart, logout) was reused, so every case ran logged out. Reused sessions are now checked against `auth.successPath` and replaced when invalid.
+- **AI and agent planning ignored login**: `plan-ai` snapshots and `plan-agent` exploration ran logged out even with `auth` configured.
+- **Ctrl-C left runs "running"**: Playwright's own signal handler exited first. The CLI now cancels the run (recorded as `cancelled`, with a resume hint) and closes browsers; a second Ctrl-C quits immediately. Same for the MCP server on SIGINT/SIGTERM.
+- **MCP stream corruption**: `testswarm_install_browser` wrote installer progress to stdout, the MCP protocol channel; it now goes to stderr.
+- **Login page unreachable**: reported as a `LoginError` with what to check, instead of a raw Playwright error.
+- **Sub-path apps**: `init --base-url http://host/app/` dropped `/app/` from `startPath`.
+- **Hash-routed single-page apps**: discovery collapsed `/#/about`-style routes into one page; they are now separate routes (in-page `#anchors` are still ignored).
+
 ### Fixed (end-to-end reliability)
 - **Browser start-up**: when the build Playwright expects is missing (the usual state right after an install or upgrade), TestSwarm now falls back to other downloaded Chromium builds, then installed Chrome, then Edge, and says which one it used. When nothing starts, the error lists every attempt and the fix. Playwright is pinned to an exact version so builds no longer drift. New `install-browser` command and `testswarm_install_browser` MCP tool.
 - **MCP start-up**: `.mcp.json` now launches `scripts/mcp.mjs`, which builds the server when `dist/` is missing or stale (output to stderr) before starting it, so a fresh clone or `git pull` no longer leaves the client with a server that fails to connect.

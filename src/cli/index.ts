@@ -154,6 +154,17 @@ async function main(): Promise<number> {
   }
 }
 
+// Ctrl-C during a run: cancel it so it is recorded as cancelled, not left "running". A second Ctrl-C quits at once.
+let interrupted = false;
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    if (interrupted) process.exit(130);
+    interrupted = true;
+    process.stderr.write("\nCancelling... (press Ctrl-C again to quit immediately)\n");
+    engine.shutdown(10_000).finally(() => process.exit(130));
+  });
+}
+
 main().then(code => { process.exitCode = code; }, error => {
   // Login and model-provider failures are environment/configuration problems the user can fix, not internal bugs.
   const expected = error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError || error?.name === "LoginError" || error?.name === "LlmError";
