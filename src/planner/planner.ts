@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { TestPlan, TestCase, DiscoveryResult } from "../core/contracts.js";
+import { TestPlan, TestCase, DiscoveryResult, Journey } from "../core/contracts.js";
+import { describeAction } from "../browser-runtime/actions.js";
 
 /** Stable, filesystem-safe identifier for a route, so case ids (and visual baselines) survive rediscovery. */
 export function routeSlug(route: string) {
@@ -11,7 +12,32 @@ export function createStarterPlan(feature = "homepage", startPath = "/"): TestPl
   return createPlanForRoutes([{ path: startPath, feature }], { categories: ["functional"] });
 }
 
-export interface PlanOptions { categories?: TestCase["category"][]; maxCases?: number; }
+export interface PlanOptions {
+  categories?: TestCase["category"][];
+  maxCases?: number;
+  /** Journey cases placed ahead of route checks (they are kept first when maxCases truncates). */
+  journeys?: TestCase[];
+}
+
+/** Turns journeys into executable cases. Steps are human-readable; `actions` is what the runner executes. */
+export function journeysToCases(journeys: Journey[], origin: NonNullable<TestCase["origin"]> = "configured"): TestCase[] {
+  return journeys.map(journey => ({
+    id: `TS-JRNY-${journey.id}`,
+    title: journey.title,
+    feature: journey.title,
+    category: "journey",
+    priority: journey.priority,
+    preconditions: [],
+    steps: [`Navigate to ${journey.startPath}`, ...journey.steps.map(describeAction)],
+    assertions: journey.steps.filter(step => step.type.startsWith("expect")).map(describeAction).concat("Every step completes"),
+    expectedOutcome: "The journey completes without errors",
+    requiredEvidence: ["screenshot", "console", "network"],
+    timeoutMs: 60000,
+    destructive: journey.destructive,
+    actions: journey.steps,
+    origin
+  }));
+}
 
 /** Builds the deterministic case set for each route. Steps and assertions describe exactly what the runner checks. */
 export function createPlanForRoutes(routes: Array<{ path: string; feature: string }>, options: PlanOptions = {}): TestPlan {
@@ -31,7 +57,8 @@ export function createPlanForRoutes(routes: Array<{ path: string; feature: strin
     ];
     return all.filter(item => categories.has(item.category));
   });
-  const limited = options.maxCases ? cases.slice(0, options.maxCases) : cases;
+  const all = [...(options.journeys ?? []), ...cases.map(item => ({ ...item, origin: "deterministic" as const }))];
+  const limited = options.maxCases ? all.slice(0, options.maxCases) : all;
   return { schemaVersion: 1, id: randomUUID(), generatedAt: new Date().toISOString(), cases: limited };
 }
 

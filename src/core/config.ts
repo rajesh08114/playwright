@@ -49,6 +49,12 @@ export async function loadConfig(path?: string, root?: string): Promise<ProjectC
   if (config.target.executablePath) config.target.executablePath = abs(config.target.executablePath);
   if (config.testData?.fixturePath) config.testData.fixturePath = abs(config.testData.fixturePath);
   if (config.benchmarkOraclePath) config.benchmarkOraclePath = abs(config.benchmarkOraclePath);
+  if (config.auth) config.auth.storageStatePath = config.auth.storageStatePath ? abs(config.auth.storageStatePath) : resolve(config.artifactsDir, "auth", "storage-state.json");
+  const journeyIds = new Set<string>();
+  for (const journey of config.journeys) {
+    if (journeyIds.has(journey.id)) throw new ConfigError(`Duplicate journey id "${journey.id}"`);
+    journeyIds.add(journey.id);
+  }
   return config;
 }
 
@@ -56,7 +62,9 @@ export async function loadConfig(path?: string, root?: string): Promise<ProjectC
 export class ConfigError extends Error { override name = "ConfigError"; }
 
 export function starterConfig(baseUrl = "http://127.0.0.1:3000") {
-  const origin = new URL(baseUrl).origin;
+  const url = new URL(baseUrl), origin = url.origin;
+  // An app served under a sub-path (http://host/app/) starts there; the origin alone would test the wrong pages.
+  const startPath = url.pathname || "/";
   return {
     schemaVersion: 1,
     name: "local-app",
@@ -64,7 +72,7 @@ export function starterConfig(baseUrl = "http://127.0.0.1:3000") {
     target: {
       baseUrl: origin,
       allowedOrigins: [origin],
-      startPath: "/",
+      startPath,
       routes: [],
       browser: "chromium",
       actionTimeoutMs: 10000,

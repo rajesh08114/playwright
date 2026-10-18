@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { loadConfig, locateProject, type ProjectLocation } from "./config.js";
 import { SqliteStore } from "./store.js";
-import { launchBrowser } from "../browser-runtime/runner.js";
+import { launchBrowser, resolvedBrowser } from "../browser-runtime/browsers.js";
 
 type Check = { name: string; status: "passed" | "failed" | "warning"; detail: string };
 const message = (error: unknown) => error instanceof Error ? error.message.split("\n")[0] : String(error);
@@ -30,8 +30,13 @@ export async function runDoctor(location: ProjectLocation = locateProject(), opt
   }
 
   if (options.launchBrowser !== false) {
-    try { const browser = await launchBrowser(config.target); const version = browser.version(); await browser.close(); checks.push({ name: "browser", status: "passed", detail: `${config.target.browser} ${version}${config.target.executablePath ? ` (${config.target.executablePath})` : ""}` }); }
-    catch (error) { checks.push({ name: "browser", status: "failed", detail: `${message(error)}. Run "npx playwright install ${config.target.browser}" or set target.executablePath / TESTSWARM_BROWSER_PATH.` }); }
+    try {
+      const browser = await launchBrowser(config.target), version = browser.version();
+      await browser.close();
+      const used = resolvedBrowser(config.target) ?? config.target.browser;
+      const fallback = !used.startsWith("Playwright-managed") && !used.startsWith("configured");
+      checks.push({ name: "browser", status: fallback ? "warning" : "passed", detail: `${used} (${version})${fallback ? `. The build this Playwright version expects is not installed; run "testswarm install-browser" for the most reliable results` : ""}${config.target.headless === false || process.env.TESTSWARM_HEADED === "1" ? ", headed" : ""}` });
+    } catch (error) { checks.push({ name: "browser", status: "failed", detail: error instanceof Error ? error.message : String(error) }); }
   }
 
   if (options.probeTarget !== false) {
@@ -42,6 +47,21 @@ export async function runDoctor(location: ProjectLocation = locateProject(), opt
   try { await access(config.target.visualBaselinesDir!); checks.push({ name: "visual-baselines", status: "passed", detail: config.target.visualBaselinesDir! }); }
   catch { checks.push({ name: "visual-baselines", status: "warning", detail: `No baselines yet; UI cases will be "blocked" until you approve some with "testswarm baseline <run-id>"` }); }
 
+  if (config.auth) {
+    const missing = config.auth.steps.flatMap(step => step.type === "fill" && step.valueFromEnv && !process.env[step.valueFromEnv] ? [step.valueFromEnv] : []);
+    checks.push(missing.length ? { name: "auth-secrets", status: "failed", detail: `Login needs environment variable(s): ${missing.join(", ")}` } : { name: "auth-secrets", status: "passed", detail: `Login secrets present; session saved to ${config.auth.storageStatePath}` });
+  }
+  const journeySecrets = [...new Set(config.journeys.flatMap(journey => journey.steps.flatMap(step => step.type === "fill" && step.valueFromEnv && !process.env[step.valueFromEnv] ? [step.valueFromEnv] : [])))];
+  if (journeySecrets.length) checks.push({ name: "journey-secrets", status: "warning", detail: `Journeys using ${journeySecrets.join(", ")} will be blocked until set` });
+  if (config.llm?.enabled) {
+    const credential = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"].find(name => process.env[name]);
+    checks.push({ name: "llm", status: credential ? "passed" : "warning", detail: credential ? `${config.llm.model} via ${credential}; page snapshots are sent to Anthropic by "plan-ai"` : `No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN set; "plan-ai" will only work if an \`ant auth login\` profile exists` });
+  }
+  if (config.llm?.enabled) {
+    const missing: string[] = [];
+    for (const name of ["deepagents", "@langchain/anthropic", "langchain"]) { try { await import(name); } catch { missing.push(name); } }
+    checks.push(missing.length ? { name: "agent-packages", status: "warning", detail: `"plan-agent" needs optional packages: npm install ${missing.join(" ")}` } : { name: "agent-packages", status: "passed", detail: `"plan-agent" available (deep agent, ${config.llm.agent.maxTrials} trials max${config.policy.allowDestructiveActions ? ", interactive" : ", read-only execution"})` });
+  }
   if (config.policy.allowExternalNetwork) checks.push({ name: "policy", status: "warning", detail: "policy.allowExternalNetwork is on: third-party subresources will load during tests" });
   if (config.policy.allowDestructiveActions) checks.push({ name: "policy", status: "warning", detail: "policy.allowDestructiveActions is on: cases marked destructive will execute" });
   return { schemaVersion: 1, ok: checks.every(check => check.status !== "failed"), checks };
